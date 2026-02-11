@@ -77,6 +77,12 @@ func (service *Service) Handle(ctx context.Context, method string, rawParams jso
 			return nil, err
 		}
 		return service.store.BuildSessionContext(ctx, input.SessionID)
+	case "runtime.tmux.ensure":
+		var input runtimeTmuxEnsureInput
+		if err := decodeParams(rawParams, &input); err != nil {
+			return nil, err
+		}
+		return service.ensureTmux(ctx, input)
 	case "task.create":
 		var input taskCreateInput
 		if err := decodeParams(rawParams, &input); err != nil {
@@ -238,6 +244,42 @@ func (service *Service) Handle(ctx context.Context, method string, rawParams jso
 			return nil, err
 		}
 		return service.mergeWorktreeToParent(ctx, input)
+	case "thread.root.ensure":
+		var input threadRootEnsureInput
+		if err := decodeParams(rawParams, &input); err != nil {
+			return nil, err
+		}
+		return service.ensureRootThread(ctx, input)
+	case "thread.child.spawn":
+		var input threadChildSpawnInput
+		if err := decodeParams(rawParams, &input); err != nil {
+			return nil, err
+		}
+		return service.spawnChildThread(ctx, input)
+	case "thread.child.list":
+		var input threadChildListInput
+		if err := decodeParams(rawParams, &input); err != nil {
+			return nil, err
+		}
+		return service.listChildThreads(ctx, input)
+	case "thread.child.interrupt":
+		var input threadChildSignalInput
+		if err := decodeParams(rawParams, &input); err != nil {
+			return nil, err
+		}
+		return service.interruptChildThread(ctx, input)
+	case "thread.child.stop":
+		var input threadChildStopInput
+		if err := decodeParams(rawParams, &input); err != nil {
+			return nil, err
+		}
+		return service.stopChildThread(ctx, input)
+	case "thread.attach_info":
+		var input threadAttachInfoInput
+		if err := decodeParams(rawParams, &input); err != nil {
+			return nil, err
+		}
+		return service.threadAttachInfo(ctx, input)
 	case "lock.acquire":
 		var input lockAcquireInput
 		if err := decodeParams(rawParams, &input); err != nil {
@@ -385,16 +427,62 @@ func (service *Service) Handle(ctx context.Context, method string, rawParams jso
 			return nil, err
 		}
 		return service.mergeReviewContext(ctx, input.MergeRequestID)
+	case "merge.review.request_auto":
+		var input mergeReviewRequestAutoInput
+		if err := decodeParams(rawParams, &input); err != nil {
+			return nil, err
+		}
+		return service.requestAutoMergeReview(ctx, input)
+	case "merge.review.thread_status":
+		var input mergeReviewThreadStatusInput
+		if err := decodeParams(rawParams, &input); err != nil {
+			return nil, err
+		}
+		return service.mergeReviewThreadStatus(ctx, input)
 	case "merge.main.request":
 		var input mergeMainRequestInput
 		if err := decodeParams(rawParams, &input); err != nil {
 			return nil, err
 		}
-		return service.store.EnqueueMainMergeRequest(ctx, store.MainMergeRequestArgs{
+		mainMergeRequest, err := service.store.EnqueueMainMergeRequest(ctx, store.MainMergeRequestArgs{
 			SessionID:      input.SessionID,
 			FromWorktreeID: input.FromWorktreeID,
 			TargetBranch:   input.TargetBranch,
 		})
+		if err != nil {
+			return nil, err
+		}
+
+		response := map[string]any{
+			"main_merge_request": mainMergeRequest,
+		}
+
+		autoReview := false
+		if input.MergeRequestID != nil {
+			autoReview = true
+		}
+		if input.AutoReview != nil {
+			autoReview = *input.AutoReview
+		}
+		if autoReview {
+			if input.MergeRequestID == nil || *input.MergeRequestID <= 0 {
+				return nil, errors.New("merge_request_id is required when auto_review=true")
+			}
+			autoReviewResponse, autoReviewErr := service.requestAutoMergeReview(ctx, mergeReviewRequestAutoInput{
+				SessionID:      input.SessionID,
+				MergeRequestID: *input.MergeRequestID,
+				ReviewerRole:   input.ReviewerRole,
+				AgentGuidePath: input.AgentGuidePath,
+				EnsureTmux:     pointerToBool(true),
+				AutoInstall:    pointerToBool(true),
+			})
+			if autoReviewErr != nil {
+				response["review_dispatch_error"] = autoReviewErr.Error()
+			} else {
+				response["review_dispatch"] = autoReviewResponse
+			}
+		}
+		return response, nil
 	case "merge.main.next":
 		return service.store.NextMainMergeRequest(ctx)
 	case "merge.main.status":
@@ -807,6 +895,10 @@ type mergeMainRequestInput struct {
 	SessionID      int64  `json:"session_id"`
 	FromWorktreeID int64  `json:"from_worktree_id"`
 	TargetBranch   string `json:"target_branch"`
+	MergeRequestID *int64 `json:"merge_request_id"`
+	AutoReview     *bool  `json:"auto_review"`
+	ReviewerRole   string `json:"reviewer_role"`
+	AgentGuidePath string `json:"agent_guide_path"`
 }
 
 type mergeMainStatusInput struct {
@@ -825,4 +917,70 @@ type mergeMainReleaseLockInput struct {
 type mirrorRefreshInput struct {
 	RequesterRole string `json:"requester_role"`
 	TargetPath    string `json:"target_path"`
+}
+
+type runtimeTmuxEnsureInput struct {
+	SessionID   *int64 `json:"session_id"`
+	AutoInstall *bool  `json:"auto_install"`
+}
+
+type threadRootEnsureInput struct {
+	SessionID      int64  `json:"session_id"`
+	Role           string `json:"role"`
+	Title          string `json:"title"`
+	Objective      string `json:"objective"`
+	EnsureTmux     *bool  `json:"ensure_tmux"`
+	AutoInstall    *bool  `json:"auto_install"`
+	AgentGuidePath string `json:"agent_guide_path"`
+}
+
+type threadChildSpawnInput struct {
+	SessionID      int64           `json:"session_id"`
+	ParentThreadID *int64          `json:"parent_thread_id"`
+	WorktreeID     *int64          `json:"worktree_id"`
+	Role           string          `json:"role"`
+	Title          string          `json:"title"`
+	Objective      string          `json:"objective"`
+	AgentGuidePath string          `json:"agent_guide_path"`
+	AgentOverride  json.RawMessage `json:"agent_override"`
+	LaunchCommand  string          `json:"launch_command"`
+	SplitDirection string          `json:"split_direction"`
+	EnsureTmux     *bool           `json:"ensure_tmux"`
+	AutoInstall    *bool           `json:"auto_install"`
+}
+
+type threadChildListInput struct {
+	SessionID      int64  `json:"session_id"`
+	ParentThreadID *int64 `json:"parent_thread_id"`
+	Status         string `json:"status"`
+	Role           string `json:"role"`
+}
+
+type threadChildSignalInput struct {
+	ThreadID int64 `json:"thread_id"`
+}
+
+type threadChildStopInput struct {
+	ThreadID      int64 `json:"thread_id"`
+	TerminatePane *bool `json:"terminate_pane"`
+}
+
+type threadAttachInfoInput struct {
+	SessionID int64  `json:"session_id"`
+	ThreadID  *int64 `json:"thread_id"`
+}
+
+type mergeReviewRequestAutoInput struct {
+	SessionID      int64           `json:"session_id"`
+	MergeRequestID int64           `json:"merge_request_id"`
+	ReviewerRole   string          `json:"reviewer_role"`
+	AgentGuidePath string          `json:"agent_guide_path"`
+	AgentOverride  json.RawMessage `json:"agent_override"`
+	EnsureTmux     *bool           `json:"ensure_tmux"`
+	AutoInstall    *bool           `json:"auto_install"`
+}
+
+type mergeReviewThreadStatusInput struct {
+	ReviewJobID    *int64 `json:"review_job_id"`
+	MergeRequestID *int64 `json:"merge_request_id"`
 }

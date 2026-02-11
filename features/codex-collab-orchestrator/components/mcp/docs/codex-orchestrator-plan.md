@@ -89,3 +89,21 @@
 - compact/세션 재시작 대응용 `work.current_ref` / `work.current_ref.ack` 추가
 - child worktree → session-root 병합 API (`worktree.merge_to_parent`) 추가
 - main 병합 큐/전역 락 API (`merge.main.*`) 추가
+
+## 11) 고도화 반영 (v3: nested thread + tmux runtime)
+
+- `runtime.tmux.ensure`:
+  - tmux 설치 여부 검사
+  - 자동 설치 시도(패키지 매니저)
+  - 권한/환경 제약 시 수동 설치 안내 fallback
+- `thread.root.ensure`:
+  - session-root thread 보장
+  - root thread id 기반 tmux session 연결
+- `thread.child.spawn/list/interrupt/stop/attach_info`:
+  - child agent thread 생성/조회/제어
+  - tmux pane 기반 진행상황 관찰 및 사용자 개입 가능
+- `merge.review.request_auto`, `merge.review.thread_status`:
+  - 병합 검토를 전용 reviewer thread로 자동 분배
+  - 리뷰 job/스레드 상태 추적
+- `merge.main.request` 확장:
+  - main 병합 요청 시 merge request id가 있으면 자동 리뷰 디스패치 연계 가능

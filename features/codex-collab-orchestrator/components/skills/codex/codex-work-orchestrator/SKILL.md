@@ -25,6 +25,9 @@ Use this skill to enforce a strict execution loop for multi-session Codex work:
   - call `resume.candidates.list`
   - ask user which suspended session to attach
   - call `resume.candidates.attach`
+- Ensure runtime prerequisites:
+  - call `runtime.tmux.ensure`
+  - call `thread.root.ensure` to bind session-root thread/tmux context
 
 ### 2) Register work items before implementation
 - Create tasks with `task.create` using strict levels.
@@ -62,8 +65,16 @@ Use this skill to enforce a strict execution loop for multi-session Codex work:
 - Acquire global main-merge lock via `merge.main.acquire_lock`.
 - Process queue one-by-one (`merge.main.next`, `merge.main.status`).
 - Release main-merge lock via `merge.main.release_lock`.
-- Use dedicated reviewer session to validate merge context.
+- Dispatch dedicated reviewer thread via `merge.review.request_auto`.
+- Track reviewer progress via `merge.review.thread_status`.
 - Read only related feature/case context, not full project docs.
+
+### 8) Nested thread management
+- Spawn nested worker/reviewer thread: `thread.child.spawn`
+- List active child threads: `thread.child.list`
+- Interrupt one child thread safely: `thread.child.interrupt`
+- Stop/terminate child thread: `thread.child.stop`
+- Retrieve attach commands: `thread.attach_info`
 
 ### 7) Refresh Markdown mirror only on demand
 - Use `mirror.status` for outdated detection.
@@ -96,6 +107,8 @@ work.current_ref (on compact/restart)
 worktree.merge_to_parent (if child worktree)
 merge.main.request
 merge.main.acquire_lock/release_lock
+merge.review.request_auto
+merge.review.thread_status
 lock.release (if acquired)
 ```
 

@@ -29,6 +29,12 @@
 - `work.current_ref.ack`
   - input: `session_id`, `ref_id`
   - output: acknowledged ref
+- `runtime.tmux.ensure`
+  - input: optional `session_id`, optional `auto_install`(default=true)
+  - behavior:
+    - tmux 존재 시 `status=ready`
+    - tmux 미존재 시 자동 설치 시도 후 실패하면 `status=manual_required` + 수동 설치 안내
+  - output: runtime prerequisite 상태 + 설치 시도 로그
 
 ## Task management
 
@@ -95,6 +101,30 @@
 - `worktree.merge_to_parent`
   - input: `session_id`, `worktree_id`
   - output: merged child and parent worktree context
+- `thread.root.ensure`
+  - input: `session_id`, optional `role`, optional `title`, optional `objective`, optional `ensure_tmux`, optional `auto_install`
+  - behavior:
+    - session-root thread 보장
+    - root thread id 기반 tmux session 생성/연결 시도
+  - output: `session`, `root_thread`, `tmux`, `attach_info`
+- `thread.child.spawn`
+  - input: `session_id`, optional `parent_thread_id`, optional `worktree_id`, optional `role`, optional `title`, optional `objective`, optional `agent_guide_path`, optional `agent_override`, optional `launch_command`, optional `split_direction(vertical|horizontal)`, optional `ensure_tmux`, optional `auto_install`
+  - behavior:
+    - root thread/tmux 상태 확보 후 child thread 생성
+    - tmux pane 분할 + Codex 실행 커맨드 전송
+  - output: `thread`, `tmux`, `attach_info`
+- `thread.child.list`
+  - input: `session_id`, optional `parent_thread_id`, optional `status`, optional `role`
+  - output: child thread 목록
+- `thread.child.interrupt`
+  - input: `thread_id`
+  - output: `result=interrupt_sent`, updated thread
+- `thread.child.stop`
+  - input: `thread_id`, optional `terminate_pane`
+  - output: `result=stopped`, updated thread
+- `thread.attach_info`
+  - input: `session_id`, optional `thread_id`
+  - output: tmux attach/switch 명령 및 pane 정보
 - `lock.acquire`
   - input: `scope_type(prefix|file)`, `scope_path`, `owner_session`, optional `ttl_seconds`
   - output: active lock
@@ -128,9 +158,21 @@
 - `merge.review_context`
   - input: `merge_request_id`
   - output: merge request + feature + child tasks + case checkpoints
+- `merge.review.request_auto`
+  - input: `session_id`, `merge_request_id`, optional `reviewer_role`, optional `agent_guide_path`, optional `agent_override`, optional `ensure_tmux`, optional `auto_install`
+  - behavior:
+    - review job 생성
+    - merge-reviewer child thread 자동 생성/디스패치
+  - output: `review_job`, `thread`, `tmux`, `attach_info`
+- `merge.review.thread_status`
+  - input: optional `review_job_id` or optional `merge_request_id`(둘 중 하나 필수)
+  - output: review job + reviewer thread 상태
 - `merge.main.request`
-  - input: `session_id`, `from_worktree_id`(session-root), optional `target_branch`
-  - output: queued main-merge request
+  - input: `session_id`, `from_worktree_id`(session-root), optional `target_branch`, optional `merge_request_id`, optional `auto_review`, optional `reviewer_role`, optional `agent_guide_path`
+  - behavior:
+    - main merge queue 등록
+    - `merge_request_id` 전달 시 기본적으로 자동 review dispatch 시도(`auto_review=false`로 비활성화 가능)
+  - output: `main_merge_request`, optional `review_dispatch`, optional `review_dispatch_error`
 - `merge.main.next`
   - input: none
   - output: next queued main-merge request

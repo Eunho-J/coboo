@@ -9,7 +9,7 @@
 
 1. `merge.main.next`로 대기중 main 병합 요청 확인
 2. `merge.main.acquire_lock`으로 전역 메인 병합 락 획득
-3. `merge.review_context` 또는 관련 task/case 컨텍스트만 로드
+3. `merge.review.thread_status` 또는 `merge.review_context`로 현재 리뷰 대상/컨텍스트 확인
 4. 충돌/누락/계약 위반 점검
 5. 필요 시 보완 지시 생성 후 재검증
 6. 처리 완료 후 `merge.main.release_lock`

@@ -40,8 +40,8 @@ func (store *Store) OpenSession(ctx context.Context, args SessionOpenArgs) (Sess
 	now := nowTimestamp()
 	result, err := transaction.ExecContext(
 		ctx,
-		`INSERT INTO sessions(agent_role, owner, started_at, last_seen_at, status, repo_path, terminal_fingerprint, intent)
-		 VALUES(?, ?, ?, ?, 'opened', ?, ?, ?)`,
+		`INSERT INTO sessions(agent_role, owner, started_at, last_seen_at, status, repo_path, terminal_fingerprint, intent, root_thread_id, tmux_session_name, runtime_state)
+		 VALUES(?, ?, ?, ?, 'opened', ?, ?, ?, NULL, NULL, NULL)`,
 		agentRole,
 		owner,
 		now,
@@ -64,7 +64,7 @@ func (store *Store) OpenSession(ctx context.Context, args SessionOpenArgs) (Sess
 
 	row := transaction.QueryRowContext(
 		ctx,
-		`SELECT id, agent_role, owner, repo_path, terminal_fingerprint, intent, main_worktree_id, session_root_worktree_id, started_at, last_seen_at, status
+		`SELECT id, agent_role, owner, repo_path, terminal_fingerprint, intent, main_worktree_id, session_root_worktree_id, root_thread_id, tmux_session_name, runtime_state, started_at, last_seen_at, status
 		 FROM sessions WHERE id = ?`,
 		sessionID,
 	)
@@ -107,7 +107,7 @@ func (store *Store) HeartbeatSession(ctx context.Context, sessionID int64) (Sess
 
 	row := transaction.QueryRowContext(
 		ctx,
-		`SELECT id, agent_role, owner, repo_path, terminal_fingerprint, intent, main_worktree_id, session_root_worktree_id, started_at, last_seen_at, status
+		`SELECT id, agent_role, owner, repo_path, terminal_fingerprint, intent, main_worktree_id, session_root_worktree_id, root_thread_id, tmux_session_name, runtime_state, started_at, last_seen_at, status
 		 FROM sessions WHERE id = ?`,
 		sessionID,
 	)
@@ -129,8 +129,8 @@ func (store *Store) CloseSession(ctx context.Context, sessionID int64) (Session,
 }
 
 func (store *Store) UpdateSession(ctx context.Context, sessionID int64, args SessionUpdateArgs) (Session, error) {
-	setClauses := make([]string, 0, 5)
-	parameters := make([]any, 0, 6)
+	setClauses := make([]string, 0, 8)
+	parameters := make([]any, 0, 12)
 
 	if args.Status != nil {
 		setClauses = append(setClauses, "status = ?")
@@ -143,6 +143,18 @@ func (store *Store) UpdateSession(ctx context.Context, sessionID int64, args Ses
 	if args.SessionRootWorktreeID != nil {
 		setClauses = append(setClauses, "session_root_worktree_id = ?")
 		parameters = append(parameters, *args.SessionRootWorktreeID)
+	}
+	if args.RootThreadID != nil {
+		setClauses = append(setClauses, "root_thread_id = ?")
+		parameters = append(parameters, *args.RootThreadID)
+	}
+	if args.TmuxSessionName != nil {
+		setClauses = append(setClauses, "tmux_session_name = ?")
+		parameters = append(parameters, *args.TmuxSessionName)
+	}
+	if args.RuntimeState != nil {
+		setClauses = append(setClauses, "runtime_state = ?")
+		parameters = append(parameters, *args.RuntimeState)
 	}
 	if args.Intent != nil {
 		setClauses = append(setClauses, "intent = ?")
@@ -174,7 +186,7 @@ func (store *Store) UpdateSession(ctx context.Context, sessionID int64, args Ses
 
 	row := transaction.QueryRowContext(
 		ctx,
-		`SELECT id, agent_role, owner, repo_path, terminal_fingerprint, intent, main_worktree_id, session_root_worktree_id, started_at, last_seen_at, status
+		`SELECT id, agent_role, owner, repo_path, terminal_fingerprint, intent, main_worktree_id, session_root_worktree_id, root_thread_id, tmux_session_name, runtime_state, started_at, last_seen_at, status
 		 FROM sessions WHERE id = ?`,
 		sessionID,
 	)
@@ -192,7 +204,7 @@ func (store *Store) UpdateSession(ctx context.Context, sessionID int64, args Ses
 func (store *Store) GetSessionByID(ctx context.Context, sessionID int64) (Session, error) {
 	row := store.database.QueryRowContext(
 		ctx,
-		`SELECT id, agent_role, owner, repo_path, terminal_fingerprint, intent, main_worktree_id, session_root_worktree_id, started_at, last_seen_at, status
+		`SELECT id, agent_role, owner, repo_path, terminal_fingerprint, intent, main_worktree_id, session_root_worktree_id, root_thread_id, tmux_session_name, runtime_state, started_at, last_seen_at, status
 		 FROM sessions WHERE id = ?`,
 		sessionID,
 	)
@@ -287,7 +299,7 @@ func (store *Store) ListResumeCandidates(ctx context.Context, repoPath string, r
 
 	rows, err := store.database.QueryContext(
 		ctx,
-		`SELECT id, agent_role, owner, repo_path, terminal_fingerprint, intent, main_worktree_id, session_root_worktree_id, started_at, last_seen_at, status
+		`SELECT id, agent_role, owner, repo_path, terminal_fingerprint, intent, main_worktree_id, session_root_worktree_id, root_thread_id, tmux_session_name, runtime_state, started_at, last_seen_at, status
 		 FROM sessions
 		 WHERE repo_path = ?
 		   AND id != ?
@@ -924,6 +936,9 @@ func scanSession(scanner rowScanner) (Session, error) {
 	var intent sql.NullString
 	var mainWorktreeID sql.NullInt64
 	var sessionRootWorktreeID sql.NullInt64
+	var rootThreadID sql.NullInt64
+	var tmuxSessionName sql.NullString
+	var runtimeState sql.NullString
 	err := scanner.Scan(
 		&session.ID,
 		&session.AgentRole,
@@ -933,6 +948,9 @@ func scanSession(scanner rowScanner) (Session, error) {
 		&intent,
 		&mainWorktreeID,
 		&sessionRootWorktreeID,
+		&rootThreadID,
+		&tmuxSessionName,
+		&runtimeState,
 		&session.StartedAt,
 		&session.LastSeenAt,
 		&session.Status,
@@ -955,6 +973,15 @@ func scanSession(scanner rowScanner) (Session, error) {
 	}
 	if sessionRootWorktreeID.Valid {
 		session.SessionRootWorktreeID = &sessionRootWorktreeID.Int64
+	}
+	if rootThreadID.Valid {
+		session.RootThreadID = &rootThreadID.Int64
+	}
+	if tmuxSessionName.Valid {
+		session.TmuxSessionName = &tmuxSessionName.String
+	}
+	if runtimeState.Valid {
+		session.RuntimeState = &runtimeState.String
 	}
 	return session, nil
 }

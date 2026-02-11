@@ -14,6 +14,9 @@ Codex 다중 세션 협업을 위한 상태/락/작업 재개 오케스트레이
 - 경로 prefix + 파일 락 혼합 제어
 - worktree 필요성 점수 판정
 - main 병합 큐 + 전역 병합 락 (`merge.main.*`)
+- tmux 런타임 준비/자동설치 + fallback 안내 (`runtime.tmux.ensure`)
+- session-root/child thread 오케스트레이션 (`thread.*`)
+- merge reviewer thread 자동 디스패치 (`merge.review.request_auto`, `merge.review.thread_status`)
 - Markdown 미러 지연 동기화 (`mirror.status`, `mirror.refresh`)
 
 ## Zero-Setup 실행 방식
@@ -89,4 +92,23 @@ make run-init
 
 ```json
 {"id":"4","method":"work.current_ref","params":{"session_id":11,"mode":"resume"}}
+```
+
+tmux 준비 + root thread 보장:
+
+```json
+{"id":"5","method":"runtime.tmux.ensure","params":{"session_id":11,"auto_install":true}}
+{"id":"6","method":"thread.root.ensure","params":{"session_id":11,"ensure_tmux":true}}
+```
+
+child thread 생성:
+
+```json
+{"id":"7","method":"thread.child.spawn","params":{"session_id":11,"role":"main-worker","title":"api/users case","split_direction":"vertical"}}
+```
+
+merge reviewer 자동 스레드 생성:
+
+```json
+{"id":"8","method":"merge.review.request_auto","params":{"session_id":11,"merge_request_id":3,"reviewer_role":"merge-reviewer"}}
 ```

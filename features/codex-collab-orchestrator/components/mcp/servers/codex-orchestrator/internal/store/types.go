@@ -91,6 +91,9 @@ type Session struct {
 	Intent                *string `json:"intent,omitempty"`
 	MainWorktreeID        *int64  `json:"main_worktree_id,omitempty"`
 	SessionRootWorktreeID *int64  `json:"session_root_worktree_id,omitempty"`
+	RootThreadID          *int64  `json:"root_thread_id,omitempty"`
+	TmuxSessionName       *string `json:"tmux_session_name,omitempty"`
+	RuntimeState          *string `json:"runtime_state,omitempty"`
 	StartedAt             string  `json:"started_at"`
 	LastSeenAt            string  `json:"last_seen_at"`
 	Status                string  `json:"status"`
@@ -145,6 +148,48 @@ type MainMergeLock struct {
 	LeaseUntil      *string `json:"lease_until,omitempty"`
 	State           string  `json:"state"`
 	UpdatedAt       string  `json:"updated_at"`
+}
+
+type Thread struct {
+	ID              int64   `json:"id"`
+	SessionID       int64   `json:"session_id"`
+	ParentThreadID  *int64  `json:"parent_thread_id,omitempty"`
+	Role            string  `json:"role"`
+	Status          string  `json:"status"`
+	Title           *string `json:"title,omitempty"`
+	Objective       *string `json:"objective,omitempty"`
+	WorktreeID      *int64  `json:"worktree_id,omitempty"`
+	AgentGuidePath  *string `json:"agent_guide_path,omitempty"`
+	AgentOverride   *string `json:"agent_override,omitempty"`
+	TmuxSessionName *string `json:"tmux_session_name,omitempty"`
+	TmuxWindowName  *string `json:"tmux_window_name,omitempty"`
+	TmuxPaneID      *string `json:"tmux_pane_id,omitempty"`
+	LaunchCommand   *string `json:"launch_command,omitempty"`
+	CreatedAt       string  `json:"created_at"`
+	StartedAt       *string `json:"started_at,omitempty"`
+	CompletedAt     *string `json:"completed_at,omitempty"`
+	UpdatedAt       string  `json:"updated_at"`
+}
+
+type ReviewJob struct {
+	ID               int64   `json:"id"`
+	MergeRequestID   int64   `json:"merge_request_id"`
+	SessionID        int64   `json:"session_id"`
+	ReviewerThreadID *int64  `json:"reviewer_thread_id,omitempty"`
+	State            string  `json:"state"`
+	NotesJSON        *string `json:"notes_json,omitempty"`
+	CreatedAt        string  `json:"created_at"`
+	UpdatedAt        string  `json:"updated_at"`
+	CompletedAt      *string `json:"completed_at,omitempty"`
+}
+
+type RuntimePrereqEvent struct {
+	ID          int64   `json:"id"`
+	SessionID   *int64  `json:"session_id,omitempty"`
+	Requirement string  `json:"requirement"`
+	Status      string  `json:"status"`
+	Detail      *string `json:"detail,omitempty"`
+	CreatedAt   string  `json:"created_at"`
 }
 
 type GraphNode struct {
@@ -272,6 +317,9 @@ type SessionUpdateArgs struct {
 	Status                *string
 	MainWorktreeID        *int64
 	SessionRootWorktreeID *int64
+	RootThreadID          *int64
+	TmuxSessionName       *string
+	RuntimeState          *string
 	Intent                *string
 }
 
@@ -291,6 +339,54 @@ type MainMergeRequestArgs struct {
 	SessionID      int64
 	FromWorktreeID int64
 	TargetBranch   string
+}
+
+type ThreadCreateArgs struct {
+	SessionID      int64
+	ParentThreadID *int64
+	Role           string
+	Status         string
+	Title          string
+	Objective      string
+	WorktreeID     *int64
+	AgentGuidePath string
+	AgentOverride  string
+}
+
+type ThreadFilter struct {
+	SessionID      int64
+	ParentThreadID *int64
+	Status         string
+	Role           string
+}
+
+type ThreadUpdateArgs struct {
+	Status          *string
+	TmuxSessionName *string
+	TmuxWindowName  *string
+	TmuxPaneID      *string
+	LaunchCommand   *string
+}
+
+type ReviewJobCreateArgs struct {
+	MergeRequestID   int64
+	SessionID        int64
+	ReviewerThreadID *int64
+	State            string
+	NotesJSON        json.RawMessage
+}
+
+type ReviewJobUpdateArgs struct {
+	State            *string
+	ReviewerThreadID *int64
+	NotesJSON        *json.RawMessage
+}
+
+type RuntimePrereqEventCreateArgs struct {
+	SessionID   *int64
+	Requirement string
+	Status      string
+	Detail      string
 }
 
 type GraphNodeCreateArgs struct {

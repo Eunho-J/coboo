@@ -134,6 +134,9 @@ func (store *Store) migrate(ctx context.Context) error {
 		`ALTER TABLE sessions ADD COLUMN intent TEXT NULL;`,
 		`ALTER TABLE sessions ADD COLUMN main_worktree_id INTEGER NULL;`,
 		`ALTER TABLE sessions ADD COLUMN session_root_worktree_id INTEGER NULL;`,
+		`ALTER TABLE sessions ADD COLUMN root_thread_id INTEGER NULL;`,
+		`ALTER TABLE sessions ADD COLUMN tmux_session_name TEXT NULL;`,
+		`ALTER TABLE sessions ADD COLUMN runtime_state TEXT NULL;`,
 		`CREATE TABLE IF NOT EXISTS current_refs (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			session_id INTEGER NOT NULL,
@@ -233,6 +236,48 @@ func (store *Store) migrate(ctx context.Context) error {
 		);`,
 		`INSERT OR IGNORE INTO merge_main_lock(id, holder_session_id, lease_until, state, updated_at)
 		 VALUES(1, NULL, NULL, 'unlocked', strftime('%Y-%m-%dT%H:%M:%fZ','now'));`,
+		`CREATE TABLE IF NOT EXISTS threads (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			session_id INTEGER NOT NULL,
+			parent_thread_id INTEGER NULL,
+			role TEXT NOT NULL,
+			status TEXT NOT NULL,
+			title TEXT NULL,
+			objective TEXT NULL,
+			worktree_id INTEGER NULL,
+			agent_guide_path TEXT NULL,
+			agent_override TEXT NULL,
+			tmux_session_name TEXT NULL,
+			tmux_window_name TEXT NULL,
+			tmux_pane_id TEXT NULL,
+			launch_command TEXT NULL,
+			created_at TEXT NOT NULL,
+			started_at TEXT NULL,
+			completed_at TEXT NULL,
+			updated_at TEXT NOT NULL
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_threads_session_parent ON threads(session_id, parent_thread_id, id DESC);`,
+		`CREATE INDEX IF NOT EXISTS idx_threads_status ON threads(status);`,
+		`CREATE TABLE IF NOT EXISTS review_jobs (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			merge_request_id INTEGER NOT NULL,
+			session_id INTEGER NOT NULL,
+			reviewer_thread_id INTEGER NULL,
+			state TEXT NOT NULL,
+			notes_json TEXT NULL,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			completed_at TEXT NULL
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_review_jobs_merge_request ON review_jobs(merge_request_id, id DESC);`,
+		`CREATE TABLE IF NOT EXISTS runtime_prereq_events (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			session_id INTEGER NULL,
+			requirement TEXT NOT NULL,
+			status TEXT NOT NULL,
+			detail TEXT NULL,
+			created_at TEXT NOT NULL
+		);`,
 		`CREATE TABLE IF NOT EXISTS mirror_meta (
 			id INTEGER PRIMARY KEY CHECK (id = 1),
 			db_version INTEGER NOT NULL DEFAULT 0,

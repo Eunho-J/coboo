@@ -9,6 +9,12 @@
 - `components/agents/codex/*.md`: `main-worker`, `merge-reviewer`, `doc-mirror-manager`, `plan-architect` 템플릿
 - `components/mcp/docs/codex-orchestrator-plan.md`: 설계 문서
 
+추가 고도화:
+
+- `runtime.tmux.ensure`로 tmux 자동 준비(실패 시 수동 설치 fallback 안내)
+- `thread.root.ensure` / `thread.child.*`로 nested agent thread + tmux pane 관리
+- `merge.review.request_auto`로 merge reviewer thread 자동 디스패치
+
 ## 설치 (선택 기능 설치)
 
 레포 루트에서 기능 단위 설치 스크립트를 사용합니다.
