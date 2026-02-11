@@ -1,0 +1,7 @@
+id: playwright
+name: Playwright Browser Automation
+version: 0.1.0
+summary: Playwright skill + npm MCP server bundle for Codex browser automation and E2E tasks.
+components:
+  - components/skills/codex/playwright
+  - components/mcp/config.toml

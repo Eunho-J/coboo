@@ -32,6 +32,8 @@
 
 - `codex-collab-orchestrator`: 다중 Codex 세션 충돌 방지 + 상태 복구 + worktree/lock 오케스트레이션  
   - 상세: `features/codex-collab-orchestrator/README.md`
+- `playwright`: Playwright 브라우저 자동화 스킬 + npm 기반 MCP 서버 설정
+  - 상세: `features/playwright/README.md`
 
 ## 기능 선택 설치
 
@@ -84,3 +86,4 @@
 
 - `features 목록 확인하고 codex-collab-orchestrator만 ~/my-workspace에 설치해줘.`
 - `codex-collab-orchestrator의 MCP 서버 테스트를 실행해줘.`
+- `playwright 기능을 ~/my-workspace에 설치하고 MCP 연결까지 확인해줘.`

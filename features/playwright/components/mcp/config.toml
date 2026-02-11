@@ -1,0 +1,4 @@
+[mcp_servers.playwright]
+command = "npx"
+args = ["-y", "@anthropic-ai/claude-code-mcp-server-playwright@latest"]
+startup_timeout_sec = 120

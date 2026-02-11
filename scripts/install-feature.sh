@@ -154,39 +154,45 @@ write_managed_block() {
 }
 
 configure_mcp_servers() {
-  local server_source_root="${COMPONENTS_DIR}/mcp/servers"
-  if [[ ! -d "${server_source_root}" ]]; then
-    return
-  fi
-
   local block_lines=""
   local has_entry="false"
+  local static_config_path="${COMPONENTS_DIR}/mcp/config.toml"
+  local server_source_root="${COMPONENTS_DIR}/mcp/servers"
 
-  for source_server_dir in "${server_source_root}"/*; do
-    [[ -d "${source_server_dir}" ]] || continue
-    local server_name
-    local server_key
-    local go_wrapper
-    local cmd_dir
-    local installed_server_dir
-    server_name="$(basename "${source_server_dir}")"
-    server_key="${FEATURE_NAME}_${server_name}"
-    server_key="${server_key//-/_}"
-    installed_server_dir="${MCP_FEATURE_DIR}/servers/${server_name}"
-    go_wrapper="${installed_server_dir}/scripts/go.sh"
-    cmd_dir="${source_server_dir}/cmd/${server_name}"
-
-    if [[ ! -x "${source_server_dir}/scripts/go.sh" || ! -d "${cmd_dir}" ]]; then
-      continue
-    fi
-
+  if [[ -f "${static_config_path}" ]]; then
     has_entry="true"
-    block_lines+=$'\n'
-    block_lines+="[mcp_servers.${server_key}]"$'\n'
-    block_lines+="command = \"${go_wrapper}\""$'\n'
-    block_lines+="args = [\"-C\", \"${installed_server_dir}\", \"run\", \"./cmd/${server_name}\", \"--mode\", \"serve\", \"--repo\", \"${TARGET_DIR}\"]"$'\n'
-    block_lines+="startup_timeout_sec = 120"$'\n'
-  done
+    block_lines="$(cat "${static_config_path}")"
+    block_lines="${block_lines//__TARGET_DIR__/${TARGET_DIR}}"
+    block_lines="${block_lines//__FEATURE_NAME__/${FEATURE_NAME}}"
+  fi
+
+  if [[ -d "${server_source_root}" ]]; then
+    for source_server_dir in "${server_source_root}"/*; do
+      [[ -d "${source_server_dir}" ]] || continue
+      local server_name
+      local server_key
+      local go_wrapper
+      local cmd_dir
+      local installed_server_dir
+      server_name="$(basename "${source_server_dir}")"
+      server_key="${FEATURE_NAME}_${server_name}"
+      server_key="${server_key//-/_}"
+      installed_server_dir="${MCP_FEATURE_DIR}/servers/${server_name}"
+      go_wrapper="${installed_server_dir}/scripts/go.sh"
+      cmd_dir="${source_server_dir}/cmd/${server_name}"
+
+      if [[ ! -x "${source_server_dir}/scripts/go.sh" || ! -d "${cmd_dir}" ]]; then
+        continue
+      fi
+
+      has_entry="true"
+      block_lines+=$'\n'
+      block_lines+="[mcp_servers.${server_key}]"$'\n'
+      block_lines+="command = \"${go_wrapper}\""$'\n'
+      block_lines+="args = [\"-C\", \"${installed_server_dir}\", \"run\", \"./cmd/${server_name}\", \"--mode\", \"serve\", \"--repo\", \"${TARGET_DIR}\"]"$'\n'
+      block_lines+="startup_timeout_sec = 120"$'\n'
+    done
+  fi
 
   if [[ "${has_entry}" != "true" ]]; then
     return

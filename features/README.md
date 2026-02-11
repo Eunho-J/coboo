@@ -11,4 +11,4 @@
 현재 기능:
 
 - `codex-collab-orchestrator`
-
+- `playwright`
