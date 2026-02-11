@@ -53,6 +53,13 @@ type framedWriter struct {
 	writer *bufio.Writer
 }
 
+type messageFormat int
+
+const (
+	messageFormatJSONLine messageFormat = iota
+	messageFormatFramed
+)
+
 func main() {
 	repoPath := flag.String("repo", ".", "repository root path")
 	mode := flag.String("mode", "serve", "execution mode: serve|once")
@@ -120,7 +127,7 @@ func runServe(service *orchestrator.Service) {
 	writer := framedWriter{writer: bufio.NewWriter(os.Stdout)}
 
 	for {
-		payload, err := reader.ReadPayload()
+		payload, format, err := reader.ReadPayload()
 		if err != nil {
 			if err == io.EOF {
 				return
@@ -133,61 +140,79 @@ func runServe(service *orchestrator.Service) {
 		if !shouldRespond {
 			continue
 		}
-		if err := writer.WritePayload(responsePayload); err != nil {
+		if err := writer.WritePayload(responsePayload, format); err != nil {
 			fmt.Fprintf(os.Stderr, "mcp write error: %v\n", err)
 			os.Exit(1)
 		}
 	}
 }
 
-func (fr framedReader) ReadPayload() ([]byte, error) {
-	contentLength := -1
-	seenAnyHeader := false
-
+func (fr framedReader) ReadPayload() ([]byte, messageFormat, error) {
 	for {
 		line, err := fr.reader.ReadString('\n')
 		if err != nil {
-			if err == io.EOF && !seenAnyHeader && line == "" {
-				return nil, io.EOF
+			if err == io.EOF && line == "" {
+				return nil, messageFormatJSONLine, io.EOF
 			}
-			return nil, err
-		}
-		seenAnyHeader = true
-		line = strings.TrimRight(line, "\r\n")
-		if line == "" {
-			break
+			return nil, messageFormatJSONLine, err
 		}
 
-		parts := strings.SplitN(line, ":", 2)
-		if len(parts) != 2 {
+		line = strings.TrimRight(line, "\r\n")
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
 			continue
 		}
-		if strings.EqualFold(strings.TrimSpace(parts[0]), "Content-Length") {
-			value := strings.TrimSpace(parts[1])
-			length, convErr := strconv.Atoi(value)
-			if convErr != nil || length < 0 {
-				return nil, fmt.Errorf("invalid Content-Length: %q", value)
-			}
-			contentLength = length
+
+		// MCP stdio in Codex commonly uses JSONL (one JSON-RPC object per line).
+		if strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[") {
+			return []byte(trimmed), messageFormatJSONLine, nil
 		}
-	}
 
-	if contentLength < 0 {
-		return nil, fmt.Errorf("missing Content-Length header")
-	}
+		// Also accept LSP-style Content-Length framing for compatibility.
+		if !strings.HasPrefix(strings.ToLower(trimmed), "content-length:") {
+			continue
+		}
 
-	payload := make([]byte, contentLength)
-	if _, err := io.ReadFull(fr.reader, payload); err != nil {
-		return nil, err
+		value := strings.TrimSpace(strings.TrimPrefix(strings.ToLower(trimmed), "content-length:"))
+		contentLength, convErr := strconv.Atoi(value)
+		if convErr != nil || contentLength < 0 {
+			return nil, messageFormatFramed, fmt.Errorf("invalid Content-Length: %q", value)
+		}
+
+		for {
+			headerLine, headerErr := fr.reader.ReadString('\n')
+			if headerErr != nil {
+				return nil, messageFormatFramed, headerErr
+			}
+			headerLine = strings.TrimRight(headerLine, "\r\n")
+			if strings.TrimSpace(headerLine) == "" {
+				break
+			}
+		}
+
+		payload := make([]byte, contentLength)
+		if _, err := io.ReadFull(fr.reader, payload); err != nil {
+			return nil, messageFormatFramed, err
+		}
+		return payload, messageFormatFramed, nil
 	}
-	return payload, nil
 }
 
-func (fw framedWriter) WritePayload(payload []byte) error {
-	if _, err := fmt.Fprintf(fw.writer, "Content-Length: %d\r\n\r\n", len(payload)); err != nil {
+func (fw framedWriter) WritePayload(payload []byte, format messageFormat) error {
+	if format == messageFormatFramed {
+		if _, err := fmt.Fprintf(fw.writer, "Content-Length: %d\r\n\r\n", len(payload)); err != nil {
+			return err
+		}
+		if _, err := fw.writer.Write(payload); err != nil {
+			return err
+		}
+		return fw.writer.Flush()
+	}
+
+	if _, err := fw.writer.Write(payload); err != nil {
 		return err
 	}
-	if _, err := fw.writer.Write(payload); err != nil {
+	if _, err := fw.writer.WriteString("\n"); err != nil {
 		return err
 	}
 	return fw.writer.Flush()
