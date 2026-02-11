@@ -2,10 +2,9 @@ package orchestrator
 
 import (
 	"context"
-	"path/filepath"
+	"encoding/json"
+	"strings"
 	"testing"
-
-	"github.com/cayde/llm/features/codex-collab-orchestrator/components/mcp/servers/codex-orchestrator/internal/store"
 )
 
 func TestDecideWorktreeSharedMode(t *testing.T) {
@@ -59,7 +58,17 @@ func TestRuntimeBundleInfo(t *testing.T) {
 	}
 }
 
-func TestAckRootHandoff(t *testing.T) {
+func TestDeriveWorktreeSlugLimitsToTwoWords(t *testing.T) {
+	slug := deriveWorktreeSlug("", "Improve the gallery experience for artist profile pages")
+	if strings.Count(slug, "-") > 1 {
+		t.Fatalf("expected 1-2 words slug, got %s", slug)
+	}
+	if slug == "" {
+		t.Fatalf("expected non-empty slug")
+	}
+}
+
+func TestBuildViewerTmuxSessionName(t *testing.T) {
 	repoPath := t.TempDir()
 	service, err := NewService(repoPath)
 	if err != nil {
@@ -67,39 +76,25 @@ func TestAckRootHandoff(t *testing.T) {
 	}
 	defer service.Close()
 
-	ctx := context.Background()
-	session, err := service.store.OpenSession(ctx, store.SessionOpenArgs{
-		AgentRole: "codex",
-		Owner:     "tester",
-		RepoPath:  filepath.ToSlash(repoPath),
-		Intent:    "new_work",
-	})
-	if err != nil {
-		t.Fatalf("failed to open session: %v", err)
+	sessionName := service.buildViewerTmuxSessionName("/tmp/worktrees/gallery-refresh")
+	if !strings.Contains(sessionName, "-") {
+		t.Fatalf("expected repository-worktree format, got %s", sessionName)
 	}
-	rootThread, err := service.store.CreateThread(ctx, store.ThreadCreateArgs{
-		SessionID: session.ID,
-		Role:      "session-root",
-		Status:    "running",
-	})
-	if err != nil {
-		t.Fatalf("failed to create root thread: %v", err)
+	if strings.Contains(sessionName, " ") {
+		t.Fatalf("expected normalized tmux session name, got %s", sessionName)
 	}
-	_, err = service.store.UpdateSession(ctx, session.ID, store.SessionUpdateArgs{
-		RootThreadID: &rootThread.ID,
-	})
-	if err != nil {
-		t.Fatalf("failed to update root thread binding: %v", err)
-	}
+}
 
-	response, err := service.ackRootHandoff(ctx, threadRootHandoffAckInput{
-		SessionID: session.ID,
-		ThreadID:  rootThread.ID,
-	})
-	if err != nil {
-		t.Fatalf("failed to ack root handoff: %v", err)
+func TestThreadChildDirectiveDecode(t *testing.T) {
+	payload := []byte(`{"thread_id":12,"directive":"continue with new constraint","mode":"interrupt_patch"}`)
+	var input threadChildDirectiveInput
+	if err := json.Unmarshal(payload, &input); err != nil {
+		t.Fatalf("expected directive payload to decode: %v", err)
 	}
-	if response["result"] != "handoff_acknowledged" {
-		t.Fatalf("expected handoff_acknowledged result, got %+v", response["result"])
+	if input.ThreadID != 12 {
+		t.Fatalf("expected thread_id=12, got %d", input.ThreadID)
+	}
+	if input.Mode != "interrupt_patch" {
+		t.Fatalf("expected mode interrupt_patch, got %s", input.Mode)
 	}
 }

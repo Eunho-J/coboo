@@ -94,31 +94,30 @@ make run-init
 {"id":"4","method":"work.current_ref","params":{"session_id":11,"mode":"resume"}}
 ```
 
-tmux 준비 + root thread 보장:
+tmux 준비:
 
 ```json
 {"id":"5","method":"runtime.tmux.ensure","params":{"session_id":11,"auto_install":true}}
-{"id":"6","method":"thread.root.ensure","params":{"session_id":11,"ensure_tmux":true,"tmux_window_name":"root","initial_prompt":"You are the root orchestrator. Start by planning this request and delegating child threads.","launch_codex":true}}
 ```
 
-root handoff bootstrap(권장):
+root-local 세션 시작(always branch):
 
 ```json
-{"id":"6","method":"orchestration.delegate","params":{"session_id":11,"user_request":"Implement requested feature set","task_spec":{"goal":"delegate from caller to root"},"scope_task_ids":[101],"scope_case_ids":[501],"max_concurrent_children":6}}
+{"id":"6","method":"session.open","params":{"intent":"new_work","owner":"cayde","user_request":"Implement requested feature set","worktree_name":"feature-refresh","always_branch":true}}
 ```
 
-root thread 시작 ack:
-
-```json
-{"id":"6a","method":"thread.root.handoff_ack","params":{"session_id":11,"thread_id":1}}
-```
-
-응답의 `attach_info.attach_command` 또는 `child_attach_hint`를 사용자에게 안내해서 `tmux attach-session -t ...`로 진행상황/상호작용을 이어가게 합니다. 호출한 CLI는 root 세션 생성 후 즉시 반환할 수 있습니다.
+응답의 `viewer_tmux_session`을 사용자에게 안내해 `tmux attach -r -t ...`로 child/merge pane 진행상황을 조회할 수 있게 합니다. root orchestration은 현재 caller CLI에서 계속 진행합니다.
 
 child thread 생성:
 
 ```json
-{"id":"7","method":"thread.child.spawn","params":{"session_id":11,"role":"main-worker","title":"api/users case","split_direction":"vertical","tmux_window_name":"children","max_concurrent_children":6,"launch_codex":true}}
+{"id":"7","method":"thread.child.spawn","params":{"session_id":11,"role":"main-worker","title":"api/users case","split_direction":"vertical","tmux_window_name":"children","runner_kind":"agents_sdk_codex_mcp","interaction_mode":"view_only","max_concurrent_children":6,"launch_codex":true}}
+```
+
+중간 지시 전달(interrupt+patch 기본):
+
+```json
+{"id":"7a","method":"thread.child.directive","params":{"thread_id":4,"directive":"Apply user-requested color update and continue","mode":"interrupt_patch"}}
 ```
 
 merge reviewer 자동 스레드 생성:

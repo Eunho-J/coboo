@@ -11,10 +11,11 @@
 
 추가 고도화:
 
-- `runtime.tmux.ensure`로 tmux 자동 준비(실패 시 수동 설치 fallback 안내)
-- `thread.root.ensure` / `thread.child.*`로 nested agent thread + tmux pane 관리
-- `orchestration.delegate` + `thread.root.handoff_ack`로 caller CLI bootstrap 후 root 주도 오케스트레이션 강제
-- `merge.review.request_auto`로 merge reviewer thread 자동 디스패치
+- caller CLI를 root orchestrator로 사용 (tmux는 child viewer pane 전용)
+- `session.open`에서 항상 dedicated worktree 생성(1-2 단어 slug)
+- `thread.child.*`로 Agents SDK child/merge agent + tmux pane 관리
+- tmux viewer 세션 명 규칙: `{repository}-{worktree}`
+- `merge.review.request_auto` 실행 시 main merge lock 선점
 
 ## 설치 (선택 기능 설치)
 

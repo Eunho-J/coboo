@@ -7,38 +7,6 @@ import (
 	"github.com/cayde/llm/features/codex-collab-orchestrator/components/mcp/servers/codex-orchestrator/internal/store"
 )
 
-func TestResolveChildTmuxSessionName(t *testing.T) {
-	service := &Service{}
-
-	defaultName := service.resolveChildTmuxSessionName("", 42)
-	if defaultName != "codex-child-42" {
-		t.Fatalf("expected default child session name codex-child-42, got %s", defaultName)
-	}
-
-	overrideName := service.resolveChildTmuxSessionName("custom-child", 42)
-	if overrideName != "custom-child" {
-		t.Fatalf("expected override child session name custom-child, got %s", overrideName)
-	}
-}
-
-func TestResolveRootTmuxSessionName(t *testing.T) {
-	service := &Service{}
-
-	sessionName := "codex-root-existing"
-	session := store.Session{
-		TmuxSessionName: &sessionName,
-	}
-	resolved := service.resolveRootTmuxSessionName("", session, 7)
-	if resolved != sessionName {
-		t.Fatalf("expected existing session name %s, got %s", sessionName, resolved)
-	}
-
-	fallback := service.resolveRootTmuxSessionName("", store.Session{}, 7)
-	if fallback != "codex-root-7" {
-		t.Fatalf("expected fallback root session name codex-root-7, got %s", fallback)
-	}
-}
-
 func TestResolveAgentGuidePathForRole(t *testing.T) {
 	service := &Service{}
 
@@ -65,28 +33,6 @@ func TestDefaultCodexLaunchCommand(t *testing.T) {
 	}
 	if !strings.Contains(command, "'orchestrate this task'") {
 		t.Fatalf("expected quoted initial prompt in launch command, got %s", command)
-	}
-}
-
-func TestDefaultRootPromptIncludesHandoff(t *testing.T) {
-	service := &Service{repoPath: t.TempDir()}
-	session := store.Session{ID: 77}
-	thread := store.Thread{
-		ID:               12,
-		Role:             "session-root",
-		TaskSpecJSON:     pointerToString(`{"title":"root","objective":"delegate work"}`),
-		ScopeTaskIDsJSON: pointerToString(`[1,2]`),
-	}
-	prompt := service.defaultRootPrompt(session, thread, threadRootEnsureInput{
-		Objective: "delegate work",
-		Title:     "root",
-	}, "codex-child-12")
-
-	if !strings.Contains(prompt, "thread.root.handoff_ack") {
-		t.Fatalf("expected handoff ack method in root prompt, got %s", prompt)
-	}
-	if !strings.Contains(prompt, "\"task_ids\"") {
-		t.Fatalf("expected scope payload in root prompt, got %s", prompt)
 	}
 }
 

@@ -5,123 +5,102 @@ description: Coordinate parallel Codex sessions in a single repository with conf
 
 # Codex Work Orchestrator
 
-Use this skill to enforce a strict execution loop for multi-session Codex work:
+Use this skill to enforce a strict root-local orchestration loop:
 
 1. Split work into `Epic → Feature → TestGroup → Case → Step`.
-2. Start orchestration in a new tmux `root` session, not in the caller CLI.
-3. Execute one Case at a time and checkpoint after every Step.
-4. Never depend on another Case output unless it is declared as fixture.
-5. Resume from orchestrator state instead of re-reading broad docs.
+2. Use the current caller CLI as root orchestrator; tmux is child viewer pane only.
+3. Always branch into a dedicated worktree when the skill starts.
+4. Spawn child workers/reviewers in tmux panes (view-only for users).
+5. Finish with lock-guarded merge review agent dispatch.
 
 ## Required Workflow
 
-### 1) Initialize workspace and open session
+### 1) Initialize workspace and open root-local session
 - Call `workspace.init`.
 - Confirm repository path and db path.
-- Open a session with `session.open`.
-  - new work: `intent=new_work` (or `auto`)
-  - resume request: `intent=resume_work`
-- If resume was requested in a new session:
-  - call `resume.candidates.list`
-  - ask user which suspended session to attach
-  - call `resume.candidates.attach`
-- Ensure runtime prerequisites:
-  - call `runtime.tmux.ensure`
-  - prefer `orchestration.delegate` to bootstrap root Codex CLI with structured handoff payload (`task_spec` + `scope_*`)
-  - fallback: call `thread.root.ensure` with `initial_prompt`/`launch_codex=true`
-- After `thread.root.ensure`, return control to the caller CLI immediately.
-  - Do not execute orchestration logic in the caller CLI.
-  - Tell the user to continue interaction via `tmux attach-session -t <root-session>`.
-  - root thread should call `thread.root.handoff_ack` before starting orchestration.
+- Call `session.open` with `intent=new_work` (or `auto`).
+  - Include `user_request`.
+  - Optionally include `worktree_name`.
+  - Keep `always_branch=true` (default).
+- `session.open` returns:
+  - session context
+  - generated `worktree_slug`
+  - `viewer_tmux_session` using `{repository}-{worktree}`.
 
-### 2) Register work items before implementation
-- Create tasks with `task.create` using strict levels.
-- Recommended:
-  - `epic` for large initiative
-  - `feature` for deliverable slices
-  - `test_group` for endpoint/domain group
-  - `case` for one independent executable unit
-- For variable planning, create planning graph nodes:
-  - `plan.bootstrap`
-  - `plan.slice.generate`
-  - `plan.rollup.preview` / `plan.rollup.submit`
+### 2) Always branch at skill start
+- Start in the dedicated session-root worktree returned by `session.open` before any planning or implementation.
+- Worktree naming policy:
+  - 1-2 words
+  - lowercase slug
+  - task-representative terms
+  - collision suffix handled automatically (`-2`, `-3`...).
 
-### 3) Decide branching before touching files
-- Default execution root is session-root worktree.
-- Call `scheduler.decide_worktree` with workload estimates.
-- If branch split is needed, create child worktree via `worktree.spawn`.
-- If shared file edits are used in the same worktree, guard via `lock.acquire`.
+### 3) Root-local orchestration only
+- Root is this caller CLI.
+- Root performs:
+  - task planning (`task.create`, `plan.*`, `graph.*`)
+  - case lifecycle control (`case.*`, `step.check`)
+  - child dispatch (`thread.child.spawn`)
+  - merge/review orchestration.
 
-### 4) Execute Case lifecycle
-- Start Case: `case.begin` with `session_id`, explicit `input_contract`, `fixtures`.
-- Record each validation step: `step.check` with `session_id`.
-- Complete Case immediately: `case.complete` with `session_id`.
-- Release lock immediately when shared mode is used.
+### 4) Child worker/reviewer management
+- Spawn child via `thread.child.spawn`.
+  - Default runtime: `runner_kind=agents_sdk_codex_mcp`.
+  - Default user visibility: `interaction_mode=view_only`.
+- Child tmux session naming: `{repository}-{worktree}`.
+- Provide read-only attach hint to users:
+  - `tmux attach -r -t <viewer-session>`.
+- For mid-task changes:
+  - Root receives user input.
+  - Root sends updates with `thread.child.directive` using `mode=interrupt_patch` (default).
+  - Use `restart` mode only when interruption cannot recover.
 
-### 5) Resume after compact/session restart
-- Call `work.current_ref` first.
-- Load only that minimal ref context.
-- If no active ref is returned, fallback to `resume.next`.
-- Continue the next unchecked Step only.
+### 5) Case lifecycle
+- Begin case: `case.begin`
+- Check steps: `step.check` (repeat)
+- Complete case: `case.complete`
+- Update `work.current_ref` checkpoints as needed.
 
-### 6) Handle merge for parallel worktrees
-- Merge child worktree back to session-root via `worktree.merge_to_parent`.
-- Queue main branch merge via `merge.main.request`.
-- Acquire global main-merge lock via `merge.main.acquire_lock`.
-- Process queue one-by-one (`merge.main.next`, `merge.main.status`).
-- Release main-merge lock via `merge.main.release_lock`.
-- Dispatch dedicated reviewer thread via `merge.review.request_auto`.
-- Track reviewer progress via `merge.review.thread_status`.
-- Read only related feature/case context, not full project docs.
+### 6) Completion and merge review
+- After implementation completion:
+  1. `merge.main.request`
+  2. `merge.main.acquire_lock`
+  3. `merge.review.request_auto` (merge agent via Agents runner)
+  4. `merge.review.thread_status` to track
+  5. `merge.main.release_lock` when review gate is complete
+- Merge review dispatch runs while main merge lock is held.
 
-### 8) Nested thread management
-- Spawn nested worker/reviewer thread in child-group session: `thread.child.spawn`
-- List active child threads: `thread.child.list`
-- Interrupt one child thread safely: `thread.child.interrupt`
-- Stop/terminate child thread: `thread.child.stop`
-- Retrieve attach commands: `thread.attach_info`
-- Use `max_concurrent_children` (default 6) to cap child panes per root session.
-
-### 7) Refresh Markdown mirror only on demand
-- Use `mirror.status` for outdated detection.
-- Request `mirror.refresh` with role `doc-mirror-manager` only when user asks for readable mirror docs.
-- Keep worker sessions focused on DB-backed state operations.
+### 7) Resume behavior
+- On restart/compact:
+  - call `work.current_ref`
+  - continue only next unchecked step in scope.
 
 ## Non-Negotiable Rules
 
-- Process exactly one active Case at a time per worker session.
-- Use one session-root worktree per terminal session.
-- The caller CLI only bootstraps root thread creation, then returns to idle.
-- Do not run a Case that requires outputs from another unfinished Case.
-- Do not read unrelated docs during Case execution.
-- Update state immediately after each meaningful action.
-- Prefer short checkpoints over large narrative summaries.
+- Root orchestration always runs in current caller CLI.
+- Every skill-triggered run starts in a dedicated worktree.
+- Worktree slug is always 1-2 words.
+- Child tmux viewing is read-only for users.
+- Root owns all planning/dispatch decisions.
+- One active Case per worker thread at a time.
+- Merge review dispatch must run under main merge lock.
 
 ## Minimal Call Sequence
 
 ```text
 workspace.init
-session.open
-  -> resume.candidates.list/attach (if intent=resume_work)
-runtime.tmux.ensure
-orchestration.delegate (preferred: launch root codex with handoff payload + return)
-  -> or thread.root.ensure (fallback)
-  -> user attaches to root tmux session
-thread.root.handoff_ack (from root thread)
+session.open (always_branch=true, user_request/worktree_name)
 task.create (epic/feature/test_group/case)
-scheduler.decide_worktree
-  -> worktree.spawn (if split needed)
-  -> lock.acquire (if shared)
+scheduler.decide_worktree (optional for nested splits)
+thread.child.spawn (runner_kind=agents_sdk_codex_mcp, interaction_mode=view_only)
 case.begin
 step.check (repeat)
 case.complete
-work.current_ref (on compact/restart)
-worktree.merge_to_parent (if child worktree)
 merge.main.request
-merge.main.acquire_lock/release_lock
+merge.main.acquire_lock
 merge.review.request_auto
 merge.review.thread_status
-lock.release (if acquired)
+merge.main.release_lock
 ```
 
 ## References

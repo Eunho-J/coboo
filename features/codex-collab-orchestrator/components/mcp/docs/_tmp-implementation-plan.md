@@ -15,7 +15,7 @@ This temporary plan is created before implementation and used as the execution a
 1. Extend SQLite schema for session runtime + threads + review jobs
 2. Add store-layer CRUD for threads/review jobs/runtime events
 3. Implement `runtime.tmux.ensure` with auto-install and fallback
-4. Implement `thread.root.ensure` and `thread.child.*`
+4. Implement root-local orchestration + `thread.child.*`
 5. Implement `merge.review.request_auto` and status query
 6. Integrate optional auto review dispatch into `merge.main.request`
 7. Update skill method contracts and server docs

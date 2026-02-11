@@ -96,9 +96,6 @@
   - tmux 설치 여부 검사
   - 자동 설치 시도(패키지 매니저)
   - 권한/환경 제약 시 수동 설치 안내 fallback
-- `thread.root.ensure`:
-  - session-root thread 보장
-  - root thread id 기반 tmux session 연결
 - `thread.child.spawn/list/interrupt/stop/attach_info`:
   - child agent thread 생성/조회/제어
   - tmux pane 기반 진행상황 관찰 및 사용자 개입 가능

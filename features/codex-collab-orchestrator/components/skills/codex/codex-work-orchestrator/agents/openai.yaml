@@ -1,4 +1,4 @@
 interface:
   display_name: "Codex Work Orchestrator"
   short_description: "Run parallel Codex work with lock and checkpoint controls"
-  default_prompt: "Bootstrap orchestration via tmux root Codex delegation, then run strict case-level checkpoints with lock discipline."
+  default_prompt: "Use caller CLI as root orchestrator, always branch into a 1-2 word worktree, spawn child agents in read-only tmux viewer panes, and finish with lock-guarded merge-agent review."

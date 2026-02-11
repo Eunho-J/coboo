@@ -22,9 +22,12 @@ const (
 	defaultMergeReviewerPath  = ".codex/agents/codex-collab-orchestrator/codex/merge-reviewer.md"
 	defaultDocMirrorPath      = ".codex/agents/codex-collab-orchestrator/codex/doc-mirror-manager.md"
 	defaultPlanArchitectPath  = ".codex/agents/codex-collab-orchestrator/codex/plan-architect.md"
-	defaultRootWindowName     = "root"
 	defaultChildWindowName    = "children"
 	defaultCodexCommand       = "codex --no-alt-screen"
+	defaultAgentsRunnerScript = "features/codex-collab-orchestrator/components/mcp/servers/codex-orchestrator/scripts/agents_codex_runner.py"
+	defaultPythonCommand      = "python3"
+	defaultRunnerKind         = "agents_sdk_codex_mcp"
+	defaultInteractionMode    = "view_only"
 	defaultMaxChildThreads    = 6
 )
 
@@ -113,27 +116,6 @@ func (service *Service) ensureTmux(ctx context.Context, input runtimeTmuxEnsureI
 	}, nil
 }
 
-func (service *Service) ensureRootThread(ctx context.Context, input threadRootEnsureInput) (map[string]any, error) {
-	session, rootThread, tmuxResult, err := service.ensureRootThreadInternal(ctx, input)
-	if err != nil {
-		return nil, err
-	}
-	attachInfo, err := service.buildAttachInfo(ctx, session, &rootThread)
-	if err != nil {
-		return nil, err
-	}
-	childSessionName := service.resolveChildTmuxSessionName(input.ChildSessionName, rootThread.ID)
-
-	return map[string]any{
-		"session":            session,
-		"root_thread":        rootThread,
-		"tmux":               tmuxResult,
-		"attach_info":        attachInfo,
-		"child_tmux_session": childSessionName,
-		"child_attach_hint":  fmt.Sprintf("tmux attach-session -t %s", childSessionName),
-	}, nil
-}
-
 func (service *Service) listChildThreads(ctx context.Context, input threadChildListInput) (map[string]any, error) {
 	if input.SessionID <= 0 {
 		return nil, errors.New("session_id is required")
@@ -165,6 +147,93 @@ func (service *Service) spawnChildThread(ctx context.Context, input threadChildS
 	}, nil
 }
 
+func (service *Service) directiveChildThread(ctx context.Context, input threadChildDirectiveInput) (map[string]any, error) {
+	if input.ThreadID <= 0 {
+		return nil, errors.New("thread_id is required")
+	}
+	directive := strings.TrimSpace(input.Directive)
+	if directive == "" {
+		return nil, errors.New("directive is required")
+	}
+	mode := strings.ToLower(strings.TrimSpace(input.Mode))
+	if mode == "" {
+		mode = "interrupt_patch"
+	}
+
+	thread, err := service.store.GetThreadByID(ctx, input.ThreadID)
+	if err != nil {
+		return nil, err
+	}
+	if thread.ParentThreadID == nil {
+		return nil, fmt.Errorf("thread is not a child thread: %d", thread.ID)
+	}
+	if thread.TmuxPaneID == nil || strings.TrimSpace(*thread.TmuxPaneID) == "" {
+		return nil, fmt.Errorf("thread has no tmux pane bound: %d", thread.ID)
+	}
+	paneID := strings.TrimSpace(*thread.TmuxPaneID)
+
+	sendDirective := func() error {
+		if _, err := service.runCommand(ctx, "tmux", "send-keys", "-t", paneID, directive, "C-m"); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	switch mode {
+	case "queue":
+		if err := sendDirective(); err != nil {
+			return nil, err
+		}
+	case "restart":
+		_, _ = service.stopChildThread(ctx, threadChildStopInput{
+			ThreadID:      thread.ID,
+			TerminatePane: pointerToBool(true),
+		})
+		respawnedThread, attachInfo, tmuxResult, spawnErr := service.spawnChildThreadInternal(ctx, threadChildSpawnInput{
+			SessionID:      thread.SessionID,
+			ParentThreadID: thread.ParentThreadID,
+			WorktreeID:     thread.WorktreeID,
+			Role:           thread.Role,
+			Title:          strings.TrimSpace(valueOrEmpty(thread.Title)),
+			Objective:      strings.TrimSpace(valueOrEmpty(thread.Objective)),
+			AgentGuidePath: strings.TrimSpace(valueOrEmpty(thread.AgentGuidePath)),
+			InitialPrompt:  directive,
+			LaunchCodex:    pointerToBool(true),
+		})
+		if spawnErr != nil {
+			return nil, spawnErr
+		}
+		return map[string]any{
+			"result":      "respawned_with_directive",
+			"mode":        mode,
+			"thread":      respawnedThread,
+			"attach_info": attachInfo,
+			"tmux":        tmuxResult,
+		}, nil
+	default:
+		if _, err := service.runCommand(ctx, "tmux", "send-keys", "-t", paneID, "C-c"); err != nil {
+			return nil, err
+		}
+		if err := sendDirective(); err != nil {
+			return nil, err
+		}
+		runningStatus := "running"
+		_, _ = service.store.UpdateThread(ctx, thread.ID, store.ThreadUpdateArgs{Status: &runningStatus})
+		mode = "interrupt_patch"
+	}
+
+	updatedThread, err := service.store.GetThreadByID(ctx, thread.ID)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"result":    "directive_sent",
+		"mode":      mode,
+		"thread":    updatedThread,
+		"directive": directive,
+	}, nil
+}
+
 func (service *Service) interruptChildThread(ctx context.Context, input threadChildSignalInput) (map[string]any, error) {
 	if input.ThreadID <= 0 {
 		return nil, errors.New("thread_id is required")
@@ -172,6 +241,9 @@ func (service *Service) interruptChildThread(ctx context.Context, input threadCh
 	thread, err := service.store.GetThreadByID(ctx, input.ThreadID)
 	if err != nil {
 		return nil, err
+	}
+	if thread.ParentThreadID == nil {
+		return nil, fmt.Errorf("thread is not a child thread: %d", thread.ID)
 	}
 	if thread.TmuxPaneID == nil || strings.TrimSpace(*thread.TmuxPaneID) == "" {
 		return nil, fmt.Errorf("thread has no tmux pane bound: %d", thread.ID)
@@ -201,6 +273,9 @@ func (service *Service) stopChildThread(ctx context.Context, input threadChildSt
 	thread, err := service.store.GetThreadByID(ctx, input.ThreadID)
 	if err != nil {
 		return nil, err
+	}
+	if thread.ParentThreadID == nil {
+		return nil, fmt.Errorf("thread is not a child thread: %d", thread.ID)
 	}
 	if thread.TmuxPaneID == nil || strings.TrimSpace(*thread.TmuxPaneID) == "" {
 		return nil, fmt.Errorf("thread has no tmux pane bound: %d", thread.ID)
@@ -262,6 +337,10 @@ func (service *Service) requestAutoMergeReview(ctx context.Context, input mergeR
 	if _, err := service.store.GetMergeRequest(ctx, input.MergeRequestID); err != nil {
 		return nil, err
 	}
+	mainMergeLock, err := service.store.AcquireMainMergeLock(ctx, input.SessionID, 0)
+	if err != nil {
+		return nil, err
+	}
 
 	reviewJob, err := service.store.CreateReviewJob(ctx, store.ReviewJobCreateArgs{
 		MergeRequestID: input.MergeRequestID,
@@ -293,12 +372,14 @@ func (service *Service) requestAutoMergeReview(ctx context.Context, input mergeR
 		AgentOverride:  input.AgentOverride,
 		EnsureTmux:     input.EnsureTmux,
 		AutoInstall:    input.AutoInstall,
+		RunnerKind:     input.RunnerKind,
 	})
 	if spawnErr != nil {
 		failedState := "failed"
 		_, _ = service.store.UpdateReviewJob(ctx, reviewJob.ID, store.ReviewJobUpdateArgs{
 			State: &failedState,
 		})
+		_, _ = service.store.ReleaseMainMergeLock(ctx, input.SessionID)
 		return nil, spawnErr
 	}
 
@@ -316,6 +397,7 @@ func (service *Service) requestAutoMergeReview(ctx context.Context, input mergeR
 		"thread":       thread,
 		"attach_info":  attachInfo,
 		"tmux":         tmuxResult,
+		"main_lock":    mainMergeLock,
 		"merge_review": map[string]any{"merge_request_id": input.MergeRequestID},
 	}, nil
 }
@@ -364,177 +446,30 @@ func (service *Service) mergeReviewThreadStatus(ctx context.Context, input merge
 	return response, nil
 }
 
-func (service *Service) ensureRootThreadInternal(ctx context.Context, input threadRootEnsureInput) (store.Session, store.Thread, map[string]any, error) {
-	if input.SessionID <= 0 {
-		return store.Session{}, store.Thread{}, nil, errors.New("session_id is required")
-	}
-	session, err := service.store.GetSessionByID(ctx, input.SessionID)
-	if err != nil {
-		return store.Session{}, store.Thread{}, nil, err
-	}
-
-	var rootThread *store.Thread
-	if session.RootThreadID != nil {
-		thread, threadErr := service.store.GetThreadByID(ctx, *session.RootThreadID)
-		if threadErr == nil {
-			rootThread = &thread
-		}
-	}
-	if rootThread == nil {
-		thread, threadErr := service.store.GetSessionRootThread(ctx, session.ID)
-		if threadErr != nil {
-			return store.Session{}, store.Thread{}, nil, threadErr
-		}
-		rootThread = thread
-	}
-
-	role := strings.TrimSpace(input.Role)
-	if role == "" {
-		role = "session-root"
-	}
-	resolvedAgentGuidePath := service.resolveAgentGuidePathForRole(role, input.AgentGuidePath)
-	normalizedTaskSpecInput := normalizeRawJSON(input.TaskSpec)
-	hasTaskSpecInput := normalizedTaskSpecInput != ""
-	hasScopeInput := len(input.ScopeTaskIDs) > 0 || len(input.ScopeCaseIDs) > 0 || len(input.ScopeNodeIDs) > 0
-	taskSpecJSON := normalizedTaskSpecInput
-	if taskSpecJSON == "" {
-		taskSpecJSON = service.defaultTaskSpecJSON("session-root", input.Title, input.Objective, nil)
-	}
-	scopeTaskIDsJSON := marshalInt64Slice(input.ScopeTaskIDs)
-	scopeCaseIDsJSON := marshalInt64Slice(input.ScopeCaseIDs)
-	scopeNodeIDsJSON := marshalInt64Slice(input.ScopeNodeIDs)
-
-	if rootThread == nil {
-		createdThread, createErr := service.store.CreateThread(ctx, store.ThreadCreateArgs{
-			SessionID:        session.ID,
-			ParentThreadID:   nil,
-			Role:             role,
-			Status:           "planned",
-			Title:            input.Title,
-			Objective:        input.Objective,
-			AgentGuidePath:   resolvedAgentGuidePath,
-			TaskSpecJSON:     taskSpecJSON,
-			ScopeTaskIDsJSON: scopeTaskIDsJSON,
-			ScopeCaseIDsJSON: scopeCaseIDsJSON,
-			ScopeNodeIDsJSON: scopeNodeIDsJSON,
-		})
-		if createErr != nil {
-			return store.Session{}, store.Thread{}, nil, createErr
-		}
-		rootThread = &createdThread
-	}
-
-	tmuxSessionName := service.resolveRootTmuxSessionName(input.TmuxSessionName, session, rootThread.ID)
-	rootWindowName := normalizeWindowName(input.TmuxWindowName, defaultRootWindowName)
-
-	session, err = service.store.UpdateSession(ctx, session.ID, store.SessionUpdateArgs{
-		RootThreadID:    &rootThread.ID,
-		TmuxSessionName: &tmuxSessionName,
-		RuntimeState:    pointerToString("thread_root_ready"),
-	})
-	if err != nil {
-		return store.Session{}, store.Thread{}, nil, err
-	}
-
-	rootThreadUpdateArgs := store.ThreadUpdateArgs{
-		TmuxSessionName: &tmuxSessionName,
-		TmuxWindowName:  &rootWindowName,
-	}
-	if hasTaskSpecInput || rootThread.TaskSpecJSON == nil {
-		rootThreadUpdateArgs.TaskSpecJSON = &taskSpecJSON
-	}
-	if hasScopeInput || rootThread.ScopeTaskIDsJSON == nil {
-		rootThreadUpdateArgs.ScopeTaskIDsJSON = &scopeTaskIDsJSON
-	}
-	if hasScopeInput || rootThread.ScopeCaseIDsJSON == nil {
-		rootThreadUpdateArgs.ScopeCaseIDsJSON = &scopeCaseIDsJSON
-	}
-	if hasScopeInput || rootThread.ScopeNodeIDsJSON == nil {
-		rootThreadUpdateArgs.ScopeNodeIDsJSON = &scopeNodeIDsJSON
-	}
-	rootThreadUpdated, err := service.store.UpdateThread(ctx, rootThread.ID, rootThreadUpdateArgs)
-	if err != nil {
-		return store.Session{}, store.Thread{}, nil, err
-	}
-
-	ensureTmux := boolValueOrDefault(input.EnsureTmux, true)
-	if !ensureTmux {
-		return session, rootThreadUpdated, map[string]any{"status": "skipped"}, nil
-	}
-
-	tmuxResult, err := service.ensureTmux(ctx, runtimeTmuxEnsureInput{
-		SessionID:   &session.ID,
-		AutoInstall: input.AutoInstall,
-	})
-	if err != nil {
-		return store.Session{}, store.Thread{}, nil, err
-	}
-
-	if isTmuxReady(tmuxResult) {
-		workdir, pathErr := service.resolveSessionRootPath(ctx, session)
-		if pathErr != nil {
-			return store.Session{}, store.Thread{}, nil, pathErr
-		}
-		rootPaneID, sessionCreated, sessionErr := service.ensureTmuxSession(ctx, tmuxSessionName, workdir, rootWindowName)
-		if sessionErr != nil {
-			return store.Session{}, store.Thread{}, nil, sessionErr
-		}
-		rootPaneID, sessionErr = service.normalizeRootSessionLayout(ctx, tmuxSessionName, rootWindowName)
-		if sessionErr != nil {
-			return store.Session{}, store.Thread{}, nil, sessionErr
-		}
-		runningStatus := "running"
-		rootThreadUpdated, err = service.store.UpdateThread(ctx, rootThreadUpdated.ID, store.ThreadUpdateArgs{
-			Status:          &runningStatus,
-			TmuxSessionName: &tmuxSessionName,
-			TmuxWindowName:  &rootWindowName,
-			TmuxPaneID:      &rootPaneID,
-		})
-		if err != nil {
-			return store.Session{}, store.Thread{}, nil, err
-		}
-
-		launchRootCodex := boolValueOrDefault(input.LaunchCodex, true)
-		forceLaunch := boolValueOrDefault(input.ForceLaunch, false)
-		shouldLaunch := launchRootCodex && (sessionCreated || forceLaunch || strings.TrimSpace(valueOrEmpty(rootThreadUpdated.LaunchCommand)) == "")
-		if shouldLaunch {
-			launchCommand := strings.TrimSpace(input.LaunchCommand)
-			if launchCommand == "" {
-				initialPrompt := strings.TrimSpace(input.InitialPrompt)
-				if initialPrompt == "" {
-					initialPrompt = service.defaultRootPrompt(session, rootThreadUpdated, input, service.resolveChildTmuxSessionName(input.ChildSessionName, rootThreadUpdated.ID))
-				}
-				launchCommand = service.defaultCodexLaunchCommand(workdir, input.CodexCommand, resolvedAgentGuidePath, initialPrompt)
-			}
-			if _, launchErr := service.runCommand(ctx, "tmux", "send-keys", "-t", rootPaneID, launchCommand, "C-m"); launchErr != nil {
-				return store.Session{}, store.Thread{}, nil, launchErr
-			}
-			rootThreadUpdated, err = service.store.UpdateThread(ctx, rootThreadUpdated.ID, store.ThreadUpdateArgs{
-				LaunchCommand: &launchCommand,
-			})
-			if err != nil {
-				return store.Session{}, store.Thread{}, nil, err
-			}
-			tmuxResult["root_launch"] = "started"
-		}
-	}
-
-	return session, rootThreadUpdated, tmuxResult, nil
-}
-
 func (service *Service) spawnChildThreadInternal(ctx context.Context, input threadChildSpawnInput) (store.Thread, map[string]any, map[string]any, error) {
 	if input.SessionID <= 0 {
 		return store.Thread{}, nil, nil, errors.New("session_id is required")
 	}
 
-	session, rootThread, tmuxResult, err := service.ensureRootThreadInternal(ctx, threadRootEnsureInput{
-		SessionID:   input.SessionID,
-		EnsureTmux:  input.EnsureTmux,
-		AutoInstall: input.AutoInstall,
-		LaunchCodex: pointerToBool(false),
-	})
+	session, err := service.store.GetSessionByID(ctx, input.SessionID)
 	if err != nil {
 		return store.Thread{}, nil, nil, err
+	}
+	session, rootThread, err := service.ensureRootThreadRecord(ctx, session)
+	if err != nil {
+		return store.Thread{}, nil, nil, err
+	}
+
+	tmuxResult := map[string]any{"status": "skipped"}
+	ensureTmux := boolValueOrDefault(input.EnsureTmux, true)
+	if ensureTmux {
+		tmuxResult, err = service.ensureTmux(ctx, runtimeTmuxEnsureInput{
+			SessionID:   &session.ID,
+			AutoInstall: input.AutoInstall,
+		})
+		if err != nil {
+			return store.Thread{}, nil, nil, err
+		}
 	}
 
 	parentThreadID := rootThread.ID
@@ -553,11 +488,23 @@ func (service *Service) spawnChildThreadInternal(ctx context.Context, input thre
 	if role == "" {
 		role = "worker"
 	}
+	runnerKind := strings.TrimSpace(input.RunnerKind)
+	if runnerKind == "" {
+		runnerKind = defaultRunnerKind
+	}
+	interactionMode := strings.TrimSpace(input.InteractionMode)
+	if interactionMode == "" {
+		interactionMode = defaultInteractionMode
+	}
+
 	resolvedGuidePath := service.resolveAgentGuidePathForRole(role, input.AgentGuidePath)
 	agentOverride := normalizeAgentOverride(input.AgentOverride)
 	taskSpecJSON := normalizeRawJSON(input.TaskSpec)
 	if taskSpecJSON == "" {
-		taskSpecJSON = service.defaultTaskSpecJSON(role, input.Title, input.Objective, nil)
+		taskSpecJSON = service.defaultTaskSpecJSON(role, input.Title, input.Objective, map[string]any{
+			"runner_kind":      runnerKind,
+			"interaction_mode": interactionMode,
+		})
 	}
 	scopeTaskIDsJSON := marshalInt64Slice(input.ScopeTaskIDs)
 	scopeCaseIDsJSON := marshalInt64Slice(input.ScopeCaseIDs)
@@ -590,16 +537,32 @@ func (service *Service) spawnChildThreadInternal(ctx context.Context, input thre
 		return createdThread, attachInfo, tmuxResult, nil
 	}
 
-	childSessionName := service.resolveChildTmuxSessionName(input.TmuxSessionName, rootThread.ID)
+	workdir, err := service.resolveThreadWorkdir(ctx, session, input.WorktreeID)
+	if err != nil {
+		return store.Thread{}, nil, nil, err
+	}
+	childSessionName := strings.TrimSpace(input.TmuxSessionName)
+	if childSessionName == "" {
+		childSessionName = strings.TrimSpace(valueOrEmpty(session.TmuxSessionName))
+	}
+	if childSessionName == "" {
+		sessionRootPath, pathErr := service.resolveSessionRootPath(ctx, session)
+		if pathErr == nil && strings.TrimSpace(sessionRootPath) != "" {
+			childSessionName = service.buildViewerTmuxSessionName(sessionRootPath)
+		} else {
+			childSessionName = service.buildViewerTmuxSessionName(workdir)
+		}
+		updatedSession, updateErr := service.store.UpdateSession(ctx, session.ID, store.SessionUpdateArgs{
+			TmuxSessionName: &childSessionName,
+		})
+		if updateErr == nil {
+			session = updatedSession
+		}
+	}
 	childWindowName := normalizeWindowName(input.TmuxWindowName, defaultChildWindowName)
 	maxConcurrentChildren := intValueOrDefault(input.MaxConcurrentChildren, defaultMaxChildThreads)
 	if maxConcurrentChildren <= 0 {
 		maxConcurrentChildren = defaultMaxChildThreads
-	}
-
-	workdir, err := service.resolveThreadWorkdir(ctx, session, input.WorktreeID)
-	if err != nil {
-		return store.Thread{}, nil, nil, err
 	}
 	if _, _, err := service.ensureTmuxSession(ctx, childSessionName, workdir, childWindowName); err != nil {
 		return store.Thread{}, nil, nil, err
@@ -620,7 +583,11 @@ func (service *Service) spawnChildThreadInternal(ctx context.Context, input thre
 		if initialPrompt == "" {
 			initialPrompt = service.defaultChildPrompt(input.SessionID, rootThread.ID, createdThread, input)
 		}
-		launchCommand = service.defaultCodexLaunchCommand(workdir, input.CodexCommand, resolvedGuidePath, initialPrompt)
+		if strings.TrimSpace(input.CodexCommand) != "" {
+			launchCommand = service.defaultCodexLaunchCommand(workdir, input.CodexCommand, resolvedGuidePath, initialPrompt)
+		} else {
+			launchCommand = service.defaultAgentsRunnerLaunchCommand(workdir, input.SessionID, createdThread, role, initialPrompt)
+		}
 	}
 	if strings.TrimSpace(launchCommand) != "" {
 		if _, err := service.runCommand(ctx, "tmux", "send-keys", "-t", paneID, launchCommand, "C-m"); err != nil {
@@ -650,6 +617,51 @@ func (service *Service) spawnChildThreadInternal(ctx context.Context, input thre
 	return updatedThread, attachInfo, tmuxResult, nil
 }
 
+func (service *Service) ensureRootThreadRecord(ctx context.Context, session store.Session) (store.Session, store.Thread, error) {
+	var rootThread *store.Thread
+	if session.RootThreadID != nil {
+		thread, err := service.store.GetThreadByID(ctx, *session.RootThreadID)
+		if err == nil {
+			rootThread = &thread
+		}
+	}
+	if rootThread == nil {
+		thread, err := service.store.GetSessionRootThread(ctx, session.ID)
+		if err != nil {
+			return store.Session{}, store.Thread{}, err
+		}
+		rootThread = thread
+	}
+
+	if rootThread == nil {
+		taskSpecJSON := service.defaultTaskSpecJSON("session-root", "root-local orchestration", "orchestrate from caller CLI", map[string]any{
+			"root_mode": "caller_cli",
+		})
+		createdThread, err := service.store.CreateThread(ctx, store.ThreadCreateArgs{
+			SessionID:      session.ID,
+			Role:           "session-root",
+			Status:         "running",
+			Title:          "root-local orchestration",
+			Objective:      "manage planning and delegation from caller CLI",
+			TaskSpecJSON:   taskSpecJSON,
+			AgentGuidePath: defaultRootAgentGuidePath,
+		})
+		if err != nil {
+			return store.Session{}, store.Thread{}, err
+		}
+		rootThread = &createdThread
+	}
+
+	updatedSession, err := service.store.UpdateSession(ctx, session.ID, store.SessionUpdateArgs{
+		RootThreadID: &rootThread.ID,
+		RuntimeState: pointerToString("root_local_active"),
+	})
+	if err != nil {
+		return store.Session{}, store.Thread{}, err
+	}
+	return updatedSession, *rootThread, nil
+}
+
 func (service *Service) buildAttachInfo(_ context.Context, session store.Session, thread *store.Thread) (map[string]any, error) {
 	sessionName := ""
 	if thread != nil && thread.TmuxSessionName != nil && strings.TrimSpace(*thread.TmuxSessionName) != "" {
@@ -664,18 +676,29 @@ func (service *Service) buildAttachInfo(_ context.Context, session store.Session
 		paneID = strings.TrimSpace(*thread.TmuxPaneID)
 	}
 	attachCommand := ""
+	attachReadonlyCommand := ""
 	switchCommand := ""
+	readOnly := false
+	if thread != nil && thread.ParentThreadID != nil {
+		readOnly = true
+	}
 	if sessionName != "" {
 		attachCommand = fmt.Sprintf("tmux attach-session -t %s", sessionName)
+		if readOnly {
+			attachReadonlyCommand = fmt.Sprintf("tmux attach -r -t %s", sessionName)
+			attachCommand = attachReadonlyCommand
+		}
 		switchCommand = fmt.Sprintf("tmux switch-client -t %s", sessionName)
 	}
 
 	return map[string]any{
-		"available":      sessionName != "",
-		"tmux_session":   sessionName,
-		"tmux_pane_id":   paneID,
-		"attach_command": attachCommand,
-		"switch_command": switchCommand,
+		"available":                sessionName != "",
+		"tmux_session":             sessionName,
+		"tmux_pane_id":             paneID,
+		"read_only":                readOnly,
+		"attach_command":           attachCommand,
+		"attach_readonly_command":  attachReadonlyCommand,
+		"switch_command":           switchCommand,
 	}, nil
 }
 
@@ -740,45 +763,6 @@ func (service *Service) ensureTmuxSession(ctx context.Context, sessionName strin
 	return strings.TrimSpace(lines[0]), created, nil
 }
 
-func (service *Service) normalizeRootSessionLayout(ctx context.Context, sessionName string, windowName string) (string, error) {
-	targetWindow := fmt.Sprintf("%s:0", sessionName)
-	windowOutput, err := service.runCommand(ctx, "tmux", "list-windows", "-t", sessionName, "-F", "#{window_index}")
-	if err != nil {
-		return "", err
-	}
-	windowLines := strings.Split(strings.TrimSpace(windowOutput), "\n")
-	for _, windowLine := range windowLines {
-		windowIndex := strings.TrimSpace(windowLine)
-		if windowIndex == "" || windowIndex == "0" {
-			continue
-		}
-		_, _ = service.runCommand(ctx, "tmux", "kill-window", "-t", fmt.Sprintf("%s:%s", sessionName, windowIndex))
-	}
-	if strings.TrimSpace(windowName) != "" {
-		if _, err := service.runCommand(ctx, "tmux", "rename-window", "-t", targetWindow, windowName); err != nil {
-			return "", err
-		}
-	}
-
-	panesOutput, err := service.runCommand(ctx, "tmux", "list-panes", "-t", targetWindow, "-F", "#{pane_id}")
-	if err != nil {
-		return "", err
-	}
-	paneLines := strings.Split(strings.TrimSpace(panesOutput), "\n")
-	if len(paneLines) == 0 || strings.TrimSpace(paneLines[0]) == "" {
-		return "", fmt.Errorf("tmux window has no panes: %s", targetWindow)
-	}
-	rootPaneID := strings.TrimSpace(paneLines[0])
-	for _, paneLine := range paneLines[1:] {
-		paneID := strings.TrimSpace(paneLine)
-		if paneID == "" {
-			continue
-		}
-		_, _ = service.runCommand(ctx, "tmux", "kill-pane", "-t", paneID)
-	}
-	return rootPaneID, nil
-}
-
 func (service *Service) createTmuxPane(ctx context.Context, target string, workdir string, splitDirection string) (string, error) {
 	directionFlag := "-v"
 	if strings.EqualFold(strings.TrimSpace(splitDirection), "horizontal") {
@@ -822,6 +806,22 @@ func (service *Service) defaultCodexLaunchCommand(workdir string, codexCommand s
 		return fmt.Sprintf("%s && %s", baseCommand, command)
 	}
 	return fmt.Sprintf("%s && %s %s", baseCommand, command, shellQuote(prompt))
+}
+
+func (service *Service) defaultAgentsRunnerLaunchCommand(workdir string, sessionID int64, childThread store.Thread, role string, initialPrompt string) string {
+	scriptPath := filepath.Join(service.repoPath, defaultAgentsRunnerScript)
+	baseCommand := fmt.Sprintf(
+		"%s %s --mode child --session-id %d --thread-id %d --role %s",
+		defaultPythonCommand,
+		shellQuote(scriptPath),
+		sessionID,
+		childThread.ID,
+		shellQuote(role),
+	)
+	if strings.TrimSpace(initialPrompt) != "" {
+		baseCommand = fmt.Sprintf("%s --initial-prompt %s", baseCommand, shellQuote(initialPrompt))
+	}
+	return fmt.Sprintf("cd %s && %s", shellQuote(workdir), baseCommand)
 }
 
 func (service *Service) ensureChildPaneCapacity(ctx context.Context, sessionID int64, parentThreadID int64, childSessionName string, maxConcurrentChildren int) error {
@@ -898,25 +898,6 @@ func (service *Service) tmuxPaneExists(ctx context.Context, paneID string) (bool
 		return false, err
 	}
 	return true, nil
-}
-
-func (service *Service) resolveRootTmuxSessionName(override string, session store.Session, rootThreadID int64) string {
-	sessionName := strings.TrimSpace(override)
-	if sessionName != "" {
-		return sessionName
-	}
-	if session.TmuxSessionName != nil && strings.TrimSpace(*session.TmuxSessionName) != "" {
-		return strings.TrimSpace(*session.TmuxSessionName)
-	}
-	return fmt.Sprintf("codex-root-%d", rootThreadID)
-}
-
-func (service *Service) resolveChildTmuxSessionName(override string, rootThreadID int64) string {
-	sessionName := strings.TrimSpace(override)
-	if sessionName != "" {
-		return sessionName
-	}
-	return fmt.Sprintf("codex-child-%d", rootThreadID)
 }
 
 func normalizeWindowName(windowName string, fallback string) string {
@@ -1022,79 +1003,6 @@ func prettyJSON(value any) string {
 		return "{}"
 	}
 	return string(encoded)
-}
-
-func (service *Service) defaultRootPrompt(session store.Session, rootThread store.Thread, input threadRootEnsureInput, childSessionName string) string {
-	objective := strings.TrimSpace(input.Objective)
-	if objective == "" {
-		objective = strings.TrimSpace(valueOrEmpty(rootThread.Objective))
-	}
-	if objective == "" {
-		objective = "orchestrate the requested work from this root thread"
-	}
-	title := strings.TrimSpace(input.Title)
-	if title == "" {
-		title = strings.TrimSpace(valueOrEmpty(rootThread.Title))
-	}
-	if title == "" {
-		title = "root orchestration"
-	}
-
-	taskSpecJSON := strings.TrimSpace(valueOrEmpty(rootThread.TaskSpecJSON))
-	if taskSpecJSON == "" {
-		taskSpecJSON = service.defaultTaskSpecJSON("session-root", title, objective, nil)
-	}
-	scopeTaskIDs := decodeInt64JSON(valueOrEmpty(rootThread.ScopeTaskIDsJSON))
-	scopeCaseIDs := decodeInt64JSON(valueOrEmpty(rootThread.ScopeCaseIDsJSON))
-	scopeNodeIDs := decodeInt64JSON(valueOrEmpty(rootThread.ScopeNodeIDsJSON))
-	maxConcurrentChildren := intValueOrDefault(input.MaxConcurrentChildren, defaultMaxChildThreads)
-	if maxConcurrentChildren <= 0 {
-		maxConcurrentChildren = defaultMaxChildThreads
-	}
-	templateText := service.readAgentTemplate(service.resolveAgentGuidePathForRole("session-root", input.AgentGuidePath))
-	if templateText == "" {
-		templateText = "# Root Orchestrator\n- Manage orchestration only from this tmux root session."
-	}
-	contextPayload := map[string]any{
-		"thread": map[string]any{
-			"role":          "session-root",
-			"session_id":    session.ID,
-			"thread_id":     rootThread.ID,
-			"title":         title,
-			"objective":     objective,
-			"tmux_session":  valueOrEmpty(rootThread.TmuxSessionName),
-			"child_session": childSessionName,
-		},
-		"runtime": map[string]any{
-			"max_concurrent_children": maxConcurrentChildren,
-			"ack_method":              "thread.root.handoff_ack",
-			"delegation_contract":     "caller_cli_bootstrap_only",
-		},
-		"scope": map[string]any{
-			"task_ids": scopeTaskIDs,
-			"case_ids": scopeCaseIDs,
-			"node_ids": scopeNodeIDs,
-		},
-		"task_spec": decodeJSONForPrompt(taskSpecJSON),
-	}
-
-	return fmt.Sprintf(
-		`%s
-
-# Runtime Handoff
-~~~json
-%s
-~~~
-
-Execution rules:
-1. Call thread.root.handoff_ack once before orchestration work.
-2. Operate only from this root tmux session; caller CLI does not continue orchestration.
-3. Read global workflow contract as needed, but directly inspect state only for your scoped task/case/node IDs.
-4. Delegate concrete implementation to child threads and keep checkpoints/current_ref updated.
-5. If user intervention is needed, pause and wait in this root thread.`,
-		templateText,
-		prettyJSON(contextPayload),
-	)
 }
 
 func (service *Service) defaultChildPrompt(sessionID int64, rootThreadID int64, childThread store.Thread, input threadChildSpawnInput) string {

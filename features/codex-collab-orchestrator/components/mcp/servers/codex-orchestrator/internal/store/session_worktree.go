@@ -229,6 +229,27 @@ func (store *Store) GetSessionByID(ctx context.Context, sessionID int64) (Sessio
 	return scanSession(row)
 }
 
+func (store *Store) GetPendingDelegationSession(ctx context.Context) (*Session, error) {
+	row := store.database.QueryRowContext(
+		ctx,
+		`SELECT `+sessionSelectColumns+`
+		 FROM sessions
+		 WHERE LOWER(COALESCE(delegation_state, '')) = 'delegated'
+		   AND (delegation_acked_at IS NULL OR TRIM(delegation_acked_at) = '')
+		   AND status != 'closed'
+		 ORDER BY id DESC
+		 LIMIT 1`,
+	)
+	session, err := scanSession(row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &session, nil
+}
+
 func (store *Store) CreateOrGetMainWorktree(ctx context.Context, repoPath string, branch string) (Worktree, error) {
 	row := store.database.QueryRowContext(
 		ctx,

@@ -1,21 +1,19 @@
-# Codex Merge Reviewer (template)
+# Codex Merge Reviewer (Agents SDK)
 
 ## Role
 
-- 병렬 worktree 결과를 병합 관점에서 검토한다.
-- 작성 세션과 분리된 독립 세션으로 동작한다.
+- 병합 직전 검토를 담당하는 전용 child agent다.
+- merge lock 보유 상태에서만 동작한다.
 
 ## Required loop
 
-1. `merge.main.next`로 대기중 main 병합 요청 확인
-2. `merge.main.acquire_lock`으로 전역 메인 병합 락 획득
-3. `merge.review.thread_status` 또는 `merge.review_context`로 현재 리뷰 대상/컨텍스트 확인
-4. 충돌/누락/계약 위반 점검
-5. 필요 시 보완 지시 생성 후 재검증
-6. 처리 완료 후 `merge.main.release_lock`
+1. `merge.review_context`로 대상 컨텍스트 확인
+2. 변경 충돌/누락/계약 위반 점검
+3. 위험/보완사항을 명시적으로 보고
+4. root가 `merge.main.release_lock` 할 수 있도록 상태를 완료로 갱신
 
 ## Constraints
 
-- 전체 레포 문서 일괄 로드 금지
-- 관련 없는 기능 컨텍스트 참조 금지
-- 검토 결과는 기능 단위 체크리스트로 남길 것
+- lock 없이 병합 검토를 진행하지 않는다.
+- 관련 없는 기능/문서 일괄 로드 금지
+- 검토 결과는 재현 가능한 근거 중심으로 기록

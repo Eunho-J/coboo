@@ -1,212 +1,120 @@
-# codex-orchestrator method contracts (v1)
+# codex-orchestrator method contracts (v2 root-local)
 
-## Session and resume
+## Session and runtime
+
+- `workspace.init`
+  - input: none
+  - output: repo/db paths
 
 - `session.open`
-  - input: optional `agent_role`, optional `owner`, optional `terminal_fingerprint`, optional `intent(new_work|resume_work|auto)`, optional `heartbeat_timeout_seconds`
+  - input:
+    - optional `agent_role`, `owner`, `terminal_fingerprint`
+    - optional `intent(new_work|resume_work|auto)`
+    - optional `heartbeat_timeout_seconds`
+    - optional `user_request`
+    - optional `worktree_name`
+    - optional `always_branch` (default `true`)
   - behavior:
-    - `intent=new_work` or `auto`: create session-root worktree automatically
-    - `intent=resume_work`: return suspended candidates for user selection
-  - output: session context or `action_required=select_resume_candidate`
-- `session.heartbeat`
-  - input: `session_id`
-  - output: updated session
-- `session.close`
-  - input: `session_id`
-  - output: updated session
-- `session.context`
-  - input: `session_id`
-  - output: session + main/session-root worktree + current_ref
-- `resume.candidates.list`
-  - input: `requester_session_id`, optional `heartbeat_timeout_seconds`
-  - output: suspended candidates (heartbeat timeout + active current_ref)
-- `resume.candidates.attach`
-  - input: `requester_session_id`, `target_session_id`
-  - output: attached session context
-- `work.current_ref`
-  - input: `session_id`, optional `mode(compact|resume|handoff)`, optional `required_files`
-  - output: minimal active work reference for fast resume
-- `work.current_ref.ack`
-  - input: `session_id`, `ref_id`
-  - output: acknowledged ref
+    - `intent=new_work|auto`: always create dedicated session-root worktree
+    - worktree slug is normalized to 1-2 words
+    - viewer tmux session name is `{repository}-{worktree}`
+  - output:
+    - `session_context`
+    - `root_mode=caller_cli`
+    - `worktree_slug`
+    - `viewer_tmux_session`
+    - `child_attach_hint`
+
 - `runtime.tmux.ensure`
-  - input: optional `session_id`, optional `auto_install`(default=true)
-  - behavior:
-    - tmux 존재 시 `status=ready`
-    - tmux 미존재 시 자동 설치 시도 후 실패하면 `status=manual_required` + 수동 설치 안내
-  - output: runtime prerequisite 상태 + 설치 시도 로그
+  - input: optional `session_id`, optional `auto_install`
+  - output: tmux runtime status
+
 - `runtime.bundle.info`
   - input: none
-  - output: 현재 repo 기준 설치된 bundle/agents/skills/mcp 경로와 sync 점검 명령
-- `orchestration.delegate`
-  - input: `session_id`, optional `title`, optional `objective`, optional `user_request`, optional `agent_guide_path`, optional `task_spec`, optional `scope_task_ids`, optional `scope_case_ids`, optional `scope_node_ids`, optional `child_session_name`, optional `max_concurrent_children`
-  - behavior:
-    - caller CLI는 root tmux Codex를 bootstrap만 수행
-    - delegation 상태를 세션에 기록(`delegation_state`, issued/acked timestamp)
-    - root thread launch 후 caller는 즉시 idle 복귀
-  - output: `session`, `root_thread`, `attach_info`, `child_attach_hint`, `caller_action=return_to_idle`
+  - output: installed bundle/agents/skills/mcp paths and verify command
 
-## Task management
+## Task / planning
 
-- `task.create`
-  - input: `level`, `title`, optional `parent_id`, `priority`, `assignee_session`
-  - output: created task row
-- `task.list`
-  - input: optional `level`, `status`, `parent_id`
-  - output: filtered tasks
-- `task.get`
-  - input: `task_id`
-  - output: one task
+- `task.create`, `task.list`, `task.get`
+- `graph.node.*`, `graph.edge.create`, `graph.checklist.upsert`, `graph.snapshot.create`
+- `plan.bootstrap`, `plan.slice.generate`, `plan.slice.replan`, `plan.rollup.*`
 
-## Planning graph
+Root-local policy:
+- caller/root CLI executes planning directly in current session.
 
-- `graph.node.create`
-  - input: `node_type`, `facet`, `title`, optional `status`, optional `priority`, optional `parent_id`, optional `worktree_id`, optional `owner_session_id`, optional `summary`, optional `risk_level`, optional `token_estimate`, optional `affected_files`, optional `approval_state`
-  - output: created graph node
-- `graph.node.list`
-  - input: optional `node_type`, `facet`, `status`, `parent_id`
-  - output: graph node list
-- `graph.edge.create`
-  - input: `from_node_id`, `to_node_id`, `edge_type`
-  - output: created edge
-- `graph.checklist.upsert`
-  - input: `node_id`, `item_text`, optional `status`, optional `order_no`, optional `facet`
-  - output: checklist item
-- `graph.snapshot.create`
-  - input: `node_id`, `snapshot_type`, optional `summary`, optional `affected_files`, optional `next_action`
-  - output: snapshot
-- `plan.bootstrap`
-  - input: `initiative_title`, `plan_title`, optional `priority`, optional `owner_session_id`, optional `summary`
-  - output: initiative + plan nodes
-- `plan.slice.generate`
-  - input: `plan_node_id`, optional `owner_session_id`, `slice_specs[]`
-  - output: generated slices
-- `plan.slice.replan`
-  - input: `node_id`, `reason`, optional `affected_files`, optional `next_action`
-  - output: replan snapshot
-- `plan.rollup.preview`
-  - input: `parent_node_id`
-  - output: rollup preview
-- `plan.rollup.submit`
-  - input: `node_id`, optional `summary`, optional `affected_files`, optional `next_action`
-  - output: pending rollup
-- `plan.rollup.approve`
-  - input: `node_id`
-  - output: node with `approval_state=approved`
-- `plan.rollup.reject`
-  - input: `node_id`
-  - output: node with `approval_state=rejected`
-
-## Isolation and locking
+## Worktree / lock
 
 - `scheduler.decide_worktree`
-  - input: `changed_files`, `estimate_minutes`, `risk`, `parallel_workers`, `conflicting_paths`
-  - output: `mode(shared|worktree)`, `score`, `reasons[]`
-- `worktree.create`
-  - input: `task_id`, `branch`, optional `path`, optional `base_ref`, optional `create_on_disk`
-  - output: registered worktree record
+  - input: workload estimates
+  - output: shared/worktree recommendation
+
 - `worktree.spawn`
-  - input: `session_id`, `parent_worktree_id`, optional `task_id`, optional `branch`, optional `path`, optional `base_ref`, optional `create_on_disk`
-  - output: child task worktree
+  - input:
+    - `session_id`, `parent_worktree_id`
+    - optional `task_id`, `reason`, `slug`, `branch`, `path`, `base_ref`, `create_on_disk`
+  - behavior:
+    - if branch/path omitted, generate from `slug`
+    - conflict-safe suffix allocation
+
 - `worktree.merge_to_parent`
   - input: `session_id`, `worktree_id`
-  - output: merged child and parent worktree context
-- `thread.root.ensure`
-  - input: `session_id`, optional `role`, optional `title`, optional `objective`, optional `ensure_tmux`, optional `auto_install`, optional `tmux_session_name`, optional `tmux_window_name`, optional `initial_prompt`, optional `launch_command`, optional `codex_command`, optional `launch_codex`(default=true), optional `force_launch`, optional `child_session_name`, optional `max_concurrent_children`, optional `task_spec`, optional `scope_task_ids`, optional `scope_case_ids`, optional `scope_node_ids`
-  - behavior:
-    - session-root thread 보장
-    - root 전용 tmux session 생성/정규화(단일 window/pane)
-    - 기본적으로 root pane에서 `codex`를 초기 프롬프트와 함께 자동 실행
-    - 호출자는 세션 attach 안내만 반환받고 즉시 제어권 복귀 가능
-  - output: `session`, `root_thread`, `tmux`, `attach_info`, `child_tmux_session`, `child_attach_hint`
-- `thread.root.handoff_ack`
-  - input: `session_id`, `thread_id`, optional `state`
-  - behavior:
-    - root thread가 handoff 수신/시작을 명시적으로 기록
-    - session delegation ack timestamp 갱신
-  - output: updated `session`, `root_thread`, `attach_info`
+  - output: merge result
+
+- `lock.acquire` / `lock.heartbeat` / `lock.release`
+
+## Thread APIs
+
 - `thread.child.spawn`
-  - input: `session_id`, optional `parent_thread_id`, optional `worktree_id`, optional `role`, optional `title`, optional `objective`, optional `agent_guide_path`, optional `agent_override`, optional `launch_command`, optional `split_direction(vertical|horizontal)`, optional `ensure_tmux`, optional `auto_install`, optional `tmux_session_name`, optional `tmux_window_name`, optional `initial_prompt`, optional `codex_command`, optional `launch_codex`(default=true), optional `max_concurrent_children`(default=6), optional `task_spec`, optional `scope_task_ids`, optional `scope_case_ids`, optional `scope_node_ids`
+  - input:
+    - `session_id`
+    - optional `parent_thread_id`, `worktree_id`
+    - optional `role`, `title`, `objective`
+    - optional `agent_guide_path`, `agent_override`
+    - optional `launch_command`, `split_direction`
+    - optional `ensure_tmux`, `auto_install`
+    - optional `tmux_session_name`, `tmux_window_name`
+    - optional `initial_prompt`, `codex_command`
+    - optional `runner_kind` (default `agents_sdk_codex_mcp`)
+    - optional `interaction_mode` (default `view_only`)
+    - optional `launch_codex`, `max_concurrent_children`
+    - optional `task_spec`, `scope_task_ids`, `scope_case_ids`, `scope_node_ids`
   - behavior:
-    - root thread/tmux 상태 확보 후 child 전용 tmux session에서 child thread 생성
-    - child session pane 분할 + `codex` 실행 커맨드 전송
-    - `max_concurrent_children` 초과 시 종료된 child pane를 정리해 새 pane 할당 시도
-  - output: `thread`, `tmux`, `attach_info`
-- `thread.child.list`
-  - input: `session_id`, optional `parent_thread_id`, optional `status`, optional `role`
-  - output: child thread 목록
-- `thread.child.interrupt`
-  - input: `thread_id`
-  - output: `result=interrupt_sent`, updated thread
-- `thread.child.stop`
-  - input: `thread_id`, optional `terminate_pane`
-  - output: `result=stopped`, updated thread
+    - spawns child pane in `{repository}-{worktree}` tmux session
+    - default launch command uses Agents SDK runner wrapper
+    - user attach info is read-only for child threads
+
+- `thread.child.directive`
+  - input: `thread_id`, `directive`, optional `mode(interrupt_patch|queue|restart)`
+  - behavior:
+    - default mode `interrupt_patch`
+    - `queue`: inject directive without interrupt
+    - `restart`: stop and respawn child with directive
+
+- `thread.child.list`, `thread.child.interrupt`, `thread.child.stop`
 - `thread.attach_info`
-  - input: `session_id`, optional `thread_id`
-  - output: tmux attach/switch 명령 및 pane 정보
-- `lock.acquire`
-  - input: `scope_type(prefix|file)`, `scope_path`, `owner_session`, optional `ttl_seconds`
-  - output: active lock
-- `lock.heartbeat`
-  - input: `lock_id`, optional `ttl_seconds`
-  - output: updated lock
-- `lock.release`
-  - input: `lock_id`
-  - output: released lock
 
 ## Case lifecycle
 
 - `case.begin`
-  - input: `case_id`, optional `session_id`, `input_contract`(json), `fixtures`(string[]), optional `required_files`
-  - output: updated case task
 - `step.check`
-  - input: `case_id`, optional `session_id`, `step_title`, `result`, `artifacts`(string[]), optional `required_files`
-  - output: recorded step
 - `case.complete`
-  - input: `case_id`, optional `session_id`, `summary`, `next_action`, optional `required_files`
-  - output: updated case task
-- `resume.next`
-  - input: none
-  - output: next case + latest checkpoint
+- `work.current_ref`, `work.current_ref.ack`
+- `resume.next`, `resume.candidates.list`, `resume.candidates.attach`
 
-## Merge and mirror
+## Merge and review
 
 - `merge.request`
-  - input: `feature_task_id`, optional `reviewer_session`, optional `notes_json`
-  - output: merge request
 - `merge.review_context`
-  - input: `merge_request_id`
-  - output: merge request + feature + child tasks + case checkpoints
 - `merge.review.request_auto`
-  - input: `session_id`, `merge_request_id`, optional `reviewer_role`, optional `agent_guide_path`, optional `agent_override`, optional `ensure_tmux`, optional `auto_install`
   - behavior:
-    - review job 생성
-    - merge-reviewer child thread 자동 생성/디스패치
-  - output: `review_job`, `thread`, `tmux`, `attach_info`
+    - acquires main merge lock before merge-agent dispatch
+    - dispatches merge-review child thread
+  - output includes `main_lock`
 - `merge.review.thread_status`
-  - input: optional `review_job_id` or optional `merge_request_id`(둘 중 하나 필수)
-  - output: review job + reviewer thread 상태
-- `merge.main.request`
-  - input: `session_id`, `from_worktree_id`(session-root), optional `target_branch`, optional `merge_request_id`, optional `auto_review`, optional `reviewer_role`, optional `agent_guide_path`
-  - behavior:
-    - main merge queue 등록
-    - `merge_request_id` 전달 시 기본적으로 자동 review dispatch 시도(`auto_review=false`로 비활성화 가능)
-  - output: `main_merge_request`, optional `review_dispatch`, optional `review_dispatch_error`
-- `merge.main.next`
-  - input: none
-  - output: next queued main-merge request
-- `merge.main.status`
-  - input: `request_id`
-  - output: main-merge request status
-- `merge.main.acquire_lock`
-  - input: `session_id`, optional `ttl_seconds`
-  - output: merge lock state
-- `merge.main.release_lock`
-  - input: `session_id`
-  - output: merge lock state
+- `merge.main.request`, `merge.main.next`, `merge.main.status`
+- `merge.main.acquire_lock`, `merge.main.release_lock`
+
+## Mirror
+
 - `mirror.status`
-  - input: none
-  - output: `db_version`, `md_version`, `outdated`, `md_path`
-- `mirror.refresh`
-  - input: `requester_role` (must be `doc-mirror-manager`), optional `target_path`
-  - output: refreshed mirror status and path
+- `mirror.refresh` (restricted role: `doc-mirror-manager`)

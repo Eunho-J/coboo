@@ -3,11 +3,12 @@ package orchestrator
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/cayde/llm/features/codex-collab-orchestrator/components/mcp/servers/codex-orchestrator/internal/store"
 )
@@ -66,30 +67,26 @@ func (service *Service) openSession(ctx context.Context, input sessionOpenInput)
 		}, nil
 	}
 
-	sessionRootBranch := fmt.Sprintf("session/%d", updatedSession.ID)
-	sessionRootPath := filepath.Join(service.repoPath, ".codex-orch", "worktrees", fmt.Sprintf("session-%d", updatedSession.ID))
-
-	if err := service.runGitWorktreeAdd(sessionRootPath, sessionRootBranch, mainWorktree.Branch); err != nil {
-		return nil, err
+	alwaysBranch := true
+	if input.AlwaysBranch != nil {
+		alwaysBranch = *input.AlwaysBranch
+	}
+	if !alwaysBranch {
+		return nil, errors.New("always_branch=false is not supported in root-local mode")
 	}
 
-	sessionRootWorktree, err := service.store.CreateWorktreeRecord(ctx, store.WorktreeCreateArgs{
-		TaskID:         0,
-		Path:           sessionRootPath,
-		Branch:         sessionRootBranch,
-		Status:         "active",
-		Kind:           "session_root",
-		ParentWorktree: &mainWorktree.ID,
-		OwnerSessionID: &updatedSession.ID,
-		MergeState:     "active",
-	})
+	preferredSlug := deriveWorktreeSlug(input.WorktreeName, input.UserRequest)
+	sessionRootWorktree, resolvedSlug, err := service.createSessionRootWorktree(ctx, updatedSession.ID, mainWorktree, preferredSlug)
 	if err != nil {
 		return nil, err
 	}
+	viewerSessionName := service.buildViewerTmuxSessionName(sessionRootWorktree.Path)
 
 	updatedSession, err = service.store.UpdateSession(ctx, updatedSession.ID, store.SessionUpdateArgs{
 		SessionRootWorktreeID: &sessionRootWorktree.ID,
 		Status:                pointerToString("active_new"),
+		TmuxSessionName:       &viewerSessionName,
+		RuntimeState:          pointerToString("root_local_ready"),
 	})
 	if err != nil {
 		return nil, err
@@ -100,7 +97,11 @@ func (service *Service) openSession(ctx context.Context, input sessionOpenInput)
 		return nil, err
 	}
 	return map[string]any{
-		"session_context": contextState,
+		"session_context":     contextState,
+		"root_mode":           "caller_cli",
+		"worktree_slug":       resolvedSlug,
+		"viewer_tmux_session": viewerSessionName,
+		"child_attach_hint":   fmt.Sprintf("tmux attach -r -t %s", viewerSessionName),
 	}, nil
 }
 
@@ -113,15 +114,6 @@ func (service *Service) spawnWorktree(ctx context.Context, input worktreeSpawnIn
 		return store.Worktree{}, fmt.Errorf("parent worktree belongs to another session: %d", *parentWorktree.OwnerSessionID)
 	}
 
-	branch := strings.TrimSpace(input.Branch)
-	if branch == "" {
-		branch = fmt.Sprintf("task/%d/%d", input.SessionID, time.Now().Unix())
-	}
-	worktreePath := strings.TrimSpace(input.Path)
-	if worktreePath == "" {
-		worktreePath = filepath.Join(service.repoPath, ".codex-orch", "worktrees", sanitizeForPath(branch))
-	}
-
 	baseRef := strings.TrimSpace(input.BaseRef)
 	if baseRef == "" {
 		baseRef = parentWorktree.Branch
@@ -131,19 +123,54 @@ func (service *Service) spawnWorktree(ctx context.Context, input worktreeSpawnIn
 		createOnDisk = *input.CreateOnDisk
 	}
 
+	taskID := int64(0)
+	if input.TaskID != nil {
+		taskID = *input.TaskID
+	}
+	slug := deriveWorktreeSlug(input.Slug, input.Reason)
+	branch := strings.TrimSpace(input.Branch)
+	worktreePath := strings.TrimSpace(input.Path)
+	if branch == "" {
+		branch = fmt.Sprintf("task/%d/%s", input.SessionID, slug)
+	}
+	if worktreePath == "" {
+		worktreePath = filepath.Join(service.repoPath, ".codex-orch", "worktrees", slug)
+	}
+
 	if createOnDisk {
-		if err := service.runGitWorktreeAdd(worktreePath, branch, baseRef); err != nil {
-			return store.Worktree{}, err
+		candidateResolved := false
+		for attempt := 0; attempt < 64; attempt++ {
+			candidateSlug := slugWithSuffix(slug, attempt)
+			candidateBranch := branch
+			candidatePath := worktreePath
+			if strings.TrimSpace(input.Branch) == "" {
+				candidateBranch = fmt.Sprintf("task/%d/%s", input.SessionID, candidateSlug)
+			}
+			if strings.TrimSpace(input.Path) == "" {
+				candidatePath = filepath.Join(service.repoPath, ".codex-orch", "worktrees", candidateSlug)
+			}
+			if service.worktreeCandidateTaken(candidatePath, candidateBranch) {
+				continue
+			}
+			if err := service.runGitWorktreeAdd(candidatePath, candidateBranch, baseRef); err != nil {
+				if isLikelyWorktreeConflictError(err) && strings.TrimSpace(input.Branch) == "" && strings.TrimSpace(input.Path) == "" {
+					continue
+				}
+				return store.Worktree{}, err
+			}
+			branch = candidateBranch
+			worktreePath = candidatePath
+			candidateResolved = true
+			break
+		}
+		if !candidateResolved {
+			return store.Worktree{}, fmt.Errorf("unable to allocate unique worktree for slug=%s", slug)
 		}
 	}
 
 	status := "planned"
 	if createOnDisk {
 		status = "active"
-	}
-	taskID := int64(0)
-	if input.TaskID != nil {
-		taskID = *input.TaskID
 	}
 
 	return service.store.CreateWorktreeRecord(ctx, store.WorktreeCreateArgs{
@@ -156,6 +183,64 @@ func (service *Service) spawnWorktree(ctx context.Context, input worktreeSpawnIn
 		OwnerSessionID: &input.SessionID,
 		MergeState:     "active",
 	})
+}
+
+func (service *Service) createSessionRootWorktree(ctx context.Context, sessionID int64, mainWorktree store.Worktree, preferredSlug string) (store.Worktree, string, error) {
+	slug := deriveWorktreeSlug(preferredSlug, fmt.Sprintf("task-%d", sessionID))
+	for attempt := 0; attempt < 64; attempt++ {
+		candidateSlug := slugWithSuffix(slug, attempt)
+		candidateBranch := fmt.Sprintf("task/%d/%s", sessionID, candidateSlug)
+		candidatePath := filepath.Join(service.repoPath, ".codex-orch", "worktrees", candidateSlug)
+		if service.worktreeCandidateTaken(candidatePath, candidateBranch) {
+			continue
+		}
+		if err := service.runGitWorktreeAdd(candidatePath, candidateBranch, mainWorktree.Branch); err != nil {
+			if isLikelyWorktreeConflictError(err) {
+				continue
+			}
+			return store.Worktree{}, "", err
+		}
+
+		record, err := service.store.CreateWorktreeRecord(ctx, store.WorktreeCreateArgs{
+			TaskID:         0,
+			Path:           candidatePath,
+			Branch:         candidateBranch,
+			Status:         "active",
+			Kind:           "session_root",
+			ParentWorktree: &mainWorktree.ID,
+			OwnerSessionID: &sessionID,
+			MergeState:     "active",
+		})
+		if err != nil {
+			return store.Worktree{}, "", err
+		}
+		return record, candidateSlug, nil
+	}
+
+	return store.Worktree{}, "", fmt.Errorf("unable to allocate unique session worktree for session=%d", sessionID)
+}
+
+func (service *Service) worktreeCandidateTaken(worktreePath string, branch string) bool {
+	if strings.TrimSpace(worktreePath) != "" {
+		if _, err := os.Stat(worktreePath); err == nil {
+			return true
+		}
+	}
+	if strings.TrimSpace(branch) == "" {
+		return false
+	}
+	command := exec.Command("git", "-C", service.repoPath, "show-ref", "--verify", "--quiet", fmt.Sprintf("refs/heads/%s", branch))
+	if err := command.Run(); err == nil {
+		return true
+	}
+	return false
+}
+
+func isLikelyWorktreeConflictError(err error) bool {
+	normalized := strings.ToLower(strings.TrimSpace(err.Error()))
+	return strings.Contains(normalized, "already exists") ||
+		strings.Contains(normalized, "already checked out") ||
+		strings.Contains(normalized, "already used by worktree")
 }
 
 func (service *Service) mergeWorktreeToParent(ctx context.Context, input worktreeMergeToParentInput) (map[string]any, error) {

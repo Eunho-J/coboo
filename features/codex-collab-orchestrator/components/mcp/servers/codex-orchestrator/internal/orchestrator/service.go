@@ -89,12 +89,6 @@ func (service *Service) Handle(ctx context.Context, method string, rawParams jso
 			return nil, err
 		}
 		return service.runtimeBundleInfo(ctx, input)
-	case "orchestration.delegate":
-		var input orchestrationDelegateInput
-		if err := decodeParams(rawParams, &input); err != nil {
-			return nil, err
-		}
-		return service.delegateOrchestration(ctx, input)
 	case "task.create":
 		var input taskCreateInput
 		if err := decodeParams(rawParams, &input); err != nil {
@@ -256,27 +250,18 @@ func (service *Service) Handle(ctx context.Context, method string, rawParams jso
 			return nil, err
 		}
 		return service.mergeWorktreeToParent(ctx, input)
-	case "thread.root.ensure":
-		var input threadRootEnsureInput
-		if err := decodeParams(rawParams, &input); err != nil {
-			return nil, err
-		}
-		return service.ensureRootThread(ctx, input)
-	case "thread.root.handoff_ack":
-		var input threadRootHandoffAckInput
-		if err := decodeParams(rawParams, &input); err != nil {
-			return nil, err
-		}
-		return service.ackRootHandoff(ctx, input)
 	case "thread.child.spawn":
 		var input threadChildSpawnInput
 		if err := decodeParams(rawParams, &input); err != nil {
 			return nil, err
 		}
-		if err := service.requireDelegationAck(ctx, input.SessionID, "thread.child.spawn"); err != nil {
+		return service.spawnChildThread(ctx, input)
+	case "thread.child.directive":
+		var input threadChildDirectiveInput
+		if err := decodeParams(rawParams, &input); err != nil {
 			return nil, err
 		}
-		return service.spawnChildThread(ctx, input)
+		return service.directiveChildThread(ctx, input)
 	case "thread.child.list":
 		var input threadChildListInput
 		if err := decodeParams(rawParams, &input); err != nil {
@@ -329,9 +314,6 @@ func (service *Service) Handle(ctx context.Context, method string, rawParams jso
 		if err := decodeParams(rawParams, &input); err != nil {
 			return nil, err
 		}
-		if err := service.requireDelegationAck(ctx, input.SessionID, "case.begin"); err != nil {
-			return nil, err
-		}
 		caseTask, err := service.store.BeginCase(ctx, store.CaseBeginArgs{
 			TaskID:        input.CaseID,
 			InputContract: input.InputContract,
@@ -357,9 +339,6 @@ func (service *Service) Handle(ctx context.Context, method string, rawParams jso
 	case "step.check":
 		var input stepCheckInput
 		if err := decodeParams(rawParams, &input); err != nil {
-			return nil, err
-		}
-		if err := service.requireDelegationAck(ctx, input.SessionID, "step.check"); err != nil {
 			return nil, err
 		}
 		stepResult, err := service.store.AddStepCheck(ctx, store.StepCheckArgs{
@@ -388,9 +367,6 @@ func (service *Service) Handle(ctx context.Context, method string, rawParams jso
 	case "case.complete":
 		var input caseCompleteInput
 		if err := decodeParams(rawParams, &input); err != nil {
-			return nil, err
-		}
-		if err := service.requireDelegationAck(ctx, input.SessionID, "case.complete"); err != nil {
 			return nil, err
 		}
 		completedCase, err := service.store.CompleteCase(ctx, store.CaseCompleteArgs{
@@ -434,16 +410,10 @@ func (service *Service) Handle(ctx context.Context, method string, rawParams jso
 		if err := decodeParams(rawParams, &input); err != nil {
 			return nil, err
 		}
-		if err := service.requireDelegationAck(ctx, input.SessionID, "work.current_ref"); err != nil {
-			return nil, err
-		}
 		return service.currentRef(ctx, input)
 	case "work.current_ref.ack":
 		var input workCurrentRefAckInput
 		if err := decodeParams(rawParams, &input); err != nil {
-			return nil, err
-		}
-		if err := service.requireDelegationAck(ctx, input.SessionID, "work.current_ref.ack"); err != nil {
 			return nil, err
 		}
 		return service.store.AckCurrentRef(ctx, input.SessionID, input.RefID)
@@ -468,9 +438,6 @@ func (service *Service) Handle(ctx context.Context, method string, rawParams jso
 		if err := decodeParams(rawParams, &input); err != nil {
 			return nil, err
 		}
-		if err := service.requireDelegationAck(ctx, input.SessionID, "merge.review.request_auto"); err != nil {
-			return nil, err
-		}
 		return service.requestAutoMergeReview(ctx, input)
 	case "merge.review.thread_status":
 		var input mergeReviewThreadStatusInput
@@ -481,9 +448,6 @@ func (service *Service) Handle(ctx context.Context, method string, rawParams jso
 	case "merge.main.request":
 		var input mergeMainRequestInput
 		if err := decodeParams(rawParams, &input); err != nil {
-			return nil, err
-		}
-		if err := service.requireDelegationAck(ctx, input.SessionID, "merge.main.request"); err != nil {
 			return nil, err
 		}
 		mainMergeRequest, err := service.store.EnqueueMainMergeRequest(ctx, store.MainMergeRequestArgs{
@@ -517,6 +481,7 @@ func (service *Service) Handle(ctx context.Context, method string, rawParams jso
 				AgentGuidePath: input.AgentGuidePath,
 				EnsureTmux:     pointerToBool(true),
 				AutoInstall:    pointerToBool(true),
+				RunnerKind:     defaultRunnerKind,
 			})
 			if autoReviewErr != nil {
 				response["review_dispatch_error"] = autoReviewErr.Error()
@@ -538,16 +503,10 @@ func (service *Service) Handle(ctx context.Context, method string, rawParams jso
 		if err := decodeParams(rawParams, &input); err != nil {
 			return nil, err
 		}
-		if err := service.requireDelegationAck(ctx, input.SessionID, "merge.main.acquire_lock"); err != nil {
-			return nil, err
-		}
 		return service.store.AcquireMainMergeLock(ctx, input.SessionID, input.TTLSeconds)
 	case "merge.main.release_lock":
 		var input mergeMainReleaseLockInput
 		if err := decodeParams(rawParams, &input); err != nil {
-			return nil, err
-		}
-		if err := service.requireDelegationAck(ctx, input.SessionID, "merge.main.release_lock"); err != nil {
 			return nil, err
 		}
 		return service.store.ReleaseMainMergeLock(ctx, input.SessionID)
@@ -756,6 +715,7 @@ type taskCreateInput struct {
 	ParentID        *int64 `json:"parent_id"`
 	Priority        int    `json:"priority"`
 	AssigneeSession string `json:"assignee_session"`
+	SessionID       *int64 `json:"session_id"`
 }
 
 type sessionOpenInput struct {
@@ -764,6 +724,9 @@ type sessionOpenInput struct {
 	TerminalFingerprint     string `json:"terminal_fingerprint"`
 	Intent                  string `json:"intent"`
 	HeartbeatTimeoutSeconds int    `json:"heartbeat_timeout_seconds"`
+	UserRequest             string `json:"user_request"`
+	WorktreeName            string `json:"worktree_name"`
+	AlwaysBranch            *bool  `json:"always_branch"`
 }
 
 type sessionHeartbeatInput struct {
@@ -856,6 +819,7 @@ type worktreeSpawnInput struct {
 	ParentWorktreeID int64  `json:"parent_worktree_id"`
 	TaskID           *int64 `json:"task_id"`
 	Reason           string `json:"reason"`
+	Slug             string `json:"slug"`
 	Branch           string `json:"branch"`
 	Path             string `json:"path"`
 	BaseRef          string `json:"base_ref"`
@@ -974,55 +938,6 @@ type runtimeTmuxEnsureInput struct {
 
 type runtimeBundleInfoInput struct{}
 
-type orchestrationDelegateInput struct {
-	SessionID             int64           `json:"session_id"`
-	Title                 string          `json:"title"`
-	Objective             string          `json:"objective"`
-	UserRequest           string          `json:"user_request"`
-	AgentGuidePath        string          `json:"agent_guide_path"`
-	InitialPrompt         string          `json:"initial_prompt"`
-	CodexCommand          string          `json:"codex_command"`
-	EnsureTmux            *bool           `json:"ensure_tmux"`
-	AutoInstall           *bool           `json:"auto_install"`
-	TmuxSessionName       string          `json:"tmux_session_name"`
-	TmuxWindowName        string          `json:"tmux_window_name"`
-	ChildSessionName      string          `json:"child_session_name"`
-	MaxConcurrentChildren *int            `json:"max_concurrent_children"`
-	TaskSpec              json.RawMessage `json:"task_spec"`
-	ScopeTaskIDs          []int64         `json:"scope_task_ids"`
-	ScopeCaseIDs          []int64         `json:"scope_case_ids"`
-	ScopeNodeIDs          []int64         `json:"scope_node_ids"`
-}
-
-type threadRootEnsureInput struct {
-	SessionID             int64           `json:"session_id"`
-	Role                  string          `json:"role"`
-	Title                 string          `json:"title"`
-	Objective             string          `json:"objective"`
-	EnsureTmux            *bool           `json:"ensure_tmux"`
-	AutoInstall           *bool           `json:"auto_install"`
-	AgentGuidePath        string          `json:"agent_guide_path"`
-	TmuxSessionName       string          `json:"tmux_session_name"`
-	TmuxWindowName        string          `json:"tmux_window_name"`
-	InitialPrompt         string          `json:"initial_prompt"`
-	LaunchCommand         string          `json:"launch_command"`
-	CodexCommand          string          `json:"codex_command"`
-	LaunchCodex           *bool           `json:"launch_codex"`
-	ForceLaunch           *bool           `json:"force_launch"`
-	ChildSessionName      string          `json:"child_session_name"`
-	MaxConcurrentChildren *int            `json:"max_concurrent_children"`
-	TaskSpec              json.RawMessage `json:"task_spec"`
-	ScopeTaskIDs          []int64         `json:"scope_task_ids"`
-	ScopeCaseIDs          []int64         `json:"scope_case_ids"`
-	ScopeNodeIDs          []int64         `json:"scope_node_ids"`
-}
-
-type threadRootHandoffAckInput struct {
-	SessionID int64  `json:"session_id"`
-	ThreadID  int64  `json:"thread_id"`
-	State     string `json:"state"`
-}
-
 type threadChildSpawnInput struct {
 	SessionID             int64           `json:"session_id"`
 	ParentThreadID        *int64          `json:"parent_thread_id"`
@@ -1040,12 +955,20 @@ type threadChildSpawnInput struct {
 	TmuxWindowName        string          `json:"tmux_window_name"`
 	InitialPrompt         string          `json:"initial_prompt"`
 	CodexCommand          string          `json:"codex_command"`
+	RunnerKind            string          `json:"runner_kind"`
+	InteractionMode       string          `json:"interaction_mode"`
 	LaunchCodex           *bool           `json:"launch_codex"`
 	MaxConcurrentChildren *int            `json:"max_concurrent_children"`
 	TaskSpec              json.RawMessage `json:"task_spec"`
 	ScopeTaskIDs          []int64         `json:"scope_task_ids"`
 	ScopeCaseIDs          []int64         `json:"scope_case_ids"`
 	ScopeNodeIDs          []int64         `json:"scope_node_ids"`
+}
+
+type threadChildDirectiveInput struct {
+	ThreadID  int64  `json:"thread_id"`
+	Directive string `json:"directive"`
+	Mode      string `json:"mode"`
 }
 
 type threadChildListInput struct {
@@ -1077,6 +1000,7 @@ type mergeReviewRequestAutoInput struct {
 	AgentOverride  json.RawMessage `json:"agent_override"`
 	EnsureTmux     *bool           `json:"ensure_tmux"`
 	AutoInstall    *bool           `json:"auto_install"`
+	RunnerKind     string          `json:"runner_kind"`
 }
 
 type mergeReviewThreadStatusInput struct {

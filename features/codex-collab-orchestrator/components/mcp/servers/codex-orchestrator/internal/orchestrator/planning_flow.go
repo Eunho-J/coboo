@@ -229,6 +229,7 @@ type planSliceGenerateInput struct {
 
 type planSliceReplanInput struct {
 	NodeID        int64    `json:"node_id"`
+	OwnerSessionID *int64  `json:"owner_session_id"`
 	Reason        string   `json:"reason"`
 	AffectedFiles []string `json:"affected_files"`
 	NextAction    string   `json:"next_action"`
