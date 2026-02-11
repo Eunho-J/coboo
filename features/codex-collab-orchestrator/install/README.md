@@ -20,6 +20,13 @@ cd /path/to/target-repo
 codex mcp list
 ```
 
+첫 실행에서 Go toolchain 다운로드/컴파일로 초기 기동이 느릴 수 있으므로, 로컬 MCP에 아래 설정을 권장합니다.
+
+```toml
+[mcp_servers.codex_collab_orchestrator_codex_orchestrator]
+startup_timeout_sec = 120
+```
+
 공식 문서:
 
 - Skills: https://developers.openai.com/codex/skills/

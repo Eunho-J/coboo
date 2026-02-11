@@ -44,6 +44,8 @@
 - `.codex/mcp/features/codex-collab-orchestrator/`
 - `.codex/config.toml` (MCP 서버 설정 블록 추가)
 
+권장: 초기 기동 타임아웃 방지를 위해 `.codex/config.toml`의 해당 MCP 엔트리에 `startup_timeout_sec = 120` 설정
+
 ## 공식 문서 기준
 
 - Skills: https://developers.openai.com/codex/skills/

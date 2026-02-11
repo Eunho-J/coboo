@@ -185,6 +185,7 @@ configure_mcp_servers() {
     block_lines+="[mcp_servers.${server_key}]"$'\n'
     block_lines+="command = \"${go_wrapper}\""$'\n'
     block_lines+="args = [\"-C\", \"${installed_server_dir}\", \"run\", \"./cmd/${server_name}\", \"--mode\", \"serve\", \"--repo\", \"${TARGET_DIR}\"]"$'\n'
+    block_lines+="startup_timeout_sec = 120"$'\n'
   done
 
   if [[ "${has_entry}" != "true" ]]; then
