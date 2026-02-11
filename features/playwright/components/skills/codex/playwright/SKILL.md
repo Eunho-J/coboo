@@ -7,7 +7,8 @@ mcp:
     command: npx
     args:
       - "-y"
-      - "@anthropic-ai/claude-code-mcp-server-playwright@latest"
+      - "@playwright/mcp@latest"
+      - "--headless"
 ---
 
 # Playwright Skill
@@ -18,7 +19,7 @@ Skill for browser automation and E2E testing.
 
 This skill uses the Playwright MCP server:
 ```bash
-npx -y @anthropic-ai/claude-code-mcp-server-playwright@latest
+npx -y @playwright/mcp@latest --headless
 ```
 
 ## Modes

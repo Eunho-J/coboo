@@ -12,7 +12,11 @@ export GOCACHE="${GOCACHE:-${PROJECT_ROOT}/.cache/go-build}"
 export GOMODCACHE="${GOMODCACHE:-${PROJECT_ROOT}/.cache/go-mod}"
 export PATH="${GOROOT}/bin:${PATH}"
 
+# Keep Go module cache writable so feature directories can be removed cleanly.
+if [[ " ${GOFLAGS:-} " != *" -modcacherw "* ]]; then
+  export GOFLAGS="${GOFLAGS:+${GOFLAGS} }-modcacherw"
+fi
+
 mkdir -p "${GOCACHE}" "${GOMODCACHE}"
 
 exec "${GO_BIN}" "$@"
-

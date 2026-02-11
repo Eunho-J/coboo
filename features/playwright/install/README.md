@@ -23,7 +23,7 @@ codex mcp list
 필수 런타임:
 
 - Node.js + npm
-- `npx -y @anthropic-ai/claude-code-mcp-server-playwright@latest` 실행 가능 환경
+- `npx -y @playwright/mcp@latest --headless` 실행 가능 환경
 
 권장 `.gitignore`:
 

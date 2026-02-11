@@ -10,7 +10,7 @@
 MCP는 npm 기반 서버를 사용합니다.
 
 ```bash
-npx -y @anthropic-ai/claude-code-mcp-server-playwright@latest
+npx -y @playwright/mcp@latest --headless
 ```
 
 ## 설치
