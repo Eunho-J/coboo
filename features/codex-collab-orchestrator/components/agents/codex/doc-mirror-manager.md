@@ -1,3 +1,4 @@
+<!-- This template is also represented in ../AGENTS.md and agents-sdk/ YAML -->
 # Codex Doc Mirror Manager (template)
 
 ## Role

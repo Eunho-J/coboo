@@ -213,9 +213,21 @@ configure_mcp_servers() {
       has_entry="true"
       block_lines+=$'\n'
       block_lines+="[mcp_servers.${server_key}]"$'\n'
+      block_lines+="enabled = true"$'\n'
+      block_lines+="required = true"$'\n'
       block_lines+="command = \"${go_wrapper}\""$'\n'
       block_lines+="args = [\"-C\", \"${installed_server_dir}\", \"run\", \"./cmd/${server_name}\", \"--mode\", \"serve\", \"--repo\", \"${TARGET_DIR}\"]"$'\n'
       block_lines+="startup_timeout_sec = 120"$'\n'
+      block_lines+="tool_timeout_sec = 300"$'\n'
+      block_lines+="env_vars = [\"HOME\", \"PATH\", \"GOPATH\", \"GOROOT\"]"$'\n'
+      block_lines+=$'\n'
+      block_lines+="# HTTP transport alternative (uncomment to use instead of stdio):"$'\n'
+      block_lines+="# [mcp_servers.${server_key}_http]"$'\n'
+      block_lines+="# enabled = false"$'\n'
+      block_lines+="# command = \"${go_wrapper}\""$'\n'
+      block_lines+="# args = [\"-C\", \"${installed_server_dir}\", \"run\", \"./cmd/${server_name}\", \"--mode\", \"serve\", \"--transport\", \"http\", \"--port\", \"8090\", \"--repo\", \"${TARGET_DIR}\"]"$'\n'
+      block_lines+="# startup_timeout_sec = 30"$'\n'
+      block_lines+="# tool_timeout_sec = 300"$'\n'
     done
   fi
 
@@ -227,8 +239,12 @@ configure_mcp_servers() {
 }
 
 configure_agents_file() {
+  local agents_template="${COMPONENTS_DIR}/agents/AGENTS.md"
   local block_body
-  block_body=$(cat <<EOF
+  if [[ -f "${agents_template}" ]]; then
+    block_body="$(cat "${agents_template}")"
+  else
+    block_body=$(cat <<EOF
 <!-- Codex feature: ${FEATURE_NAME} -->
 - Feature bundle installed: \`${FEATURE_NAME}\`
 - Skill directory: \`.agents/skills\`
@@ -236,6 +252,7 @@ configure_agents_file() {
 - MCP config is managed in \`.codex/config.toml\` via block \`codex-feature:${FEATURE_NAME}:mcp\`
 EOF
 )
+  fi
 
   write_managed_block "${AGENTS_MD_PATH}" "codex-feature:${FEATURE_NAME}:agents" "${block_body}"
 }

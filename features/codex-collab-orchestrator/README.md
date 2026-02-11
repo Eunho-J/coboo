@@ -5,7 +5,7 @@
 ## 번들 구성
 
 - `components/mcp/servers/codex-orchestrator/`: 상태/락/worktree/재개 오케스트레이션 MCP 서버
-- `components/skills/codex/codex-work-orchestrator/`: Codex 실행 워크플로우 강제 스킬
+- `components/skills/codex/codestrator/`: Codex 실행 워크플로우 강제 스킬
 - `components/agents/codex/*.md`: `root-orchestrator`, `main-worker`, `merge-reviewer`, `doc-mirror-manager`, `plan-architect` 템플릿
 - `components/mcp/docs/codex-orchestrator-plan.md`: 설계 문서
 
@@ -47,7 +47,7 @@
 설치 대상 저장소 기준(Codex 공식 경로 반영):
 
 - `AGENTS.md` (managed block 추가)
-- `.agents/skills/codex-work-orchestrator/`
+- `.agents/skills/codestrator/`
 - `.codex/agents/codex-collab-orchestrator/`
 - `.codex/mcp/features/codex-collab-orchestrator/`
 - `.codex/config.toml` (MCP 서버 설정 블록 추가)

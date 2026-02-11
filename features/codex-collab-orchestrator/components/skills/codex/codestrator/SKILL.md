@@ -1,9 +1,11 @@
 ---
-name: codex-work-orchestrator
+name: codestrator
 description: Coordinate parallel Codex sessions in a single repository with conflict-safe execution, hierarchical task checklists, compact-safe resume points, and selective context loading. Use when multiple Codex sessions or users work concurrently, when worktree vs shared-workspace isolation must be decided, when file/prefix lock control is required, or when case-level progress must survive context compaction and session restarts.
+metadata:
+  short-description: "Parallel Codex orchestration with lock, checkpoint, and worktree isolation"
 ---
 
-# Codex Work Orchestrator
+# Codestrator
 
 Use this skill to enforce a strict root-local orchestration loop:
 
@@ -85,23 +87,40 @@ Use this skill to enforce a strict root-local orchestration loop:
 - One active Case per worker thread at a time.
 - Merge review dispatch must run under main merge lock.
 
+## Tool Groups
+
+The orchestrator exposes 8 domain-specific MCP tools. Each tool constrains its `method` parameter to the group's allowed methods. The legacy `orchestrator.call` tool remains available for backward compatibility.
+
+| Tool | Purpose |
+|------|---------|
+| `orch_session` | Session and workspace initialization |
+| `orch_task` | Task CRUD and case lifecycle (begin/check/complete) |
+| `orch_graph` | Planning graph nodes, edges, checklists, snapshots |
+| `orch_workspace` | Worktree management, locks, isolation decisions |
+| `orch_thread` | Child thread spawn, directive, lifecycle |
+| `orch_lifecycle` | Work checkpoint references (current_ref) |
+| `orch_merge` | Merge requests, review dispatch, main merge lock |
+| `orch_system` | Runtime (tmux), mirror, planning operations |
+
 ## Minimal Call Sequence
 
 ```text
-workspace.init
-session.open (always_branch=true, user_request/worktree_name)
-task.create (epic/feature/test_group/case)
-scheduler.decide_worktree (optional for nested splits)
-thread.child.spawn (runner_kind=agents_sdk_codex_mcp, interaction_mode=view_only)
-case.begin
-step.check (repeat)
-case.complete
-merge.main.request
-merge.main.acquire_lock
-merge.review.request_auto
-merge.review.thread_status
-merge.main.release_lock
+orch_session:   workspace.init
+orch_session:   session.open (always_branch=true, user_request/worktree_name)
+orch_task:      task.create (epic/feature/test_group/case)
+orch_workspace: scheduler.decide_worktree (optional for nested splits)
+orch_thread:    thread.child.spawn (runner_kind=agents_sdk_codex_mcp, interaction_mode=view_only)
+orch_task:      case.begin
+orch_task:      step.check (repeat)
+orch_task:      case.complete
+orch_merge:     merge.main.request
+orch_merge:     merge.main.acquire_lock
+orch_merge:     merge.review.request_auto
+orch_merge:     merge.review.thread_status
+orch_merge:     merge.main.release_lock
 ```
+
+> **Backward compatibility**: All methods above can also be called via the legacy `orchestrator.call` tool with any method string.
 
 ## References
 

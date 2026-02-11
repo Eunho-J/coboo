@@ -12,7 +12,7 @@ const featureBundleName = "codex-collab-orchestrator"
 
 func (service *Service) runtimeBundleInfo(_ context.Context, _ runtimeBundleInfoInput) (map[string]any, error) {
 	agentsRoot := filepath.Join(service.repoPath, ".codex", "agents", featureBundleName, "codex")
-	skillsRoot := filepath.Join(service.repoPath, ".agents", "skills", "codex-work-orchestrator")
+	skillsRoot := filepath.Join(service.repoPath, ".agents", "skills", "codestrator")
 	mcpRoot := filepath.Join(service.repoPath, ".codex", "mcp", "features", featureBundleName)
 	sourceRoot := filepath.Join(service.repoPath, "features", featureBundleName)
 

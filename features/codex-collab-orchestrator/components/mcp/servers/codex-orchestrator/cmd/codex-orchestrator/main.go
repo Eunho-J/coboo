@@ -7,6 +7,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -15,6 +17,69 @@ import (
 )
 
 const mcpProtocolVersion = "2024-11-05"
+
+type toolGroup struct {
+	Name        string
+	Description string
+	Methods     []string
+}
+
+var toolGroups = []toolGroup{
+	{
+		Name:        "orch_session",
+		Description: "Session and workspace initialization management",
+		Methods:     []string{"workspace.init", "session.open", "session.heartbeat", "session.close", "session.context"},
+	},
+	{
+		Name:        "orch_task",
+		Description: "Task lifecycle, case execution, and resume management",
+		Methods:     []string{"task.create", "task.list", "task.get", "case.begin", "step.check", "case.complete", "resume.next", "resume.candidates.list", "resume.candidates.attach"},
+	},
+	{
+		Name:        "orch_graph",
+		Description: "Dependency graph, checklists, and snapshots",
+		Methods:     []string{"graph.node.create", "graph.node.list", "graph.edge.create", "graph.checklist.upsert", "graph.snapshot.create"},
+	},
+	{
+		Name:        "orch_workspace",
+		Description: "Worktree scheduling, creation, merging, and lock management",
+		Methods:     []string{"scheduler.decide_worktree", "worktree.create", "worktree.list", "worktree.spawn", "worktree.merge_to_parent", "lock.acquire", "lock.heartbeat", "lock.release"},
+	},
+	{
+		Name:        "orch_thread",
+		Description: "Child thread spawning, directives, and lifecycle control",
+		Methods:     []string{"thread.child.spawn", "thread.child.directive", "thread.child.list", "thread.child.interrupt", "thread.child.stop", "thread.attach_info"},
+	},
+	{
+		Name:        "orch_lifecycle",
+		Description: "Current work reference tracking and acknowledgement",
+		Methods:     []string{"work.current_ref", "work.current_ref.ack"},
+	},
+	{
+		Name:        "orch_merge",
+		Description: "Branch merge requests, reviews, and main-line merge operations",
+		Methods:     []string{"merge.request", "merge.review_context", "merge.review.request_auto", "merge.review.thread_status", "merge.main.request", "merge.main.next", "merge.main.status", "merge.main.acquire_lock", "merge.main.release_lock"},
+	},
+	{
+		Name:        "orch_system",
+		Description: "Runtime, mirror, and plan management utilities",
+		Methods:     []string{"runtime.tmux.ensure", "runtime.bundle.info", "mirror.status", "mirror.refresh", "plan.bootstrap", "plan.slice.generate", "plan.slice.replan", "plan.rollup.preview", "plan.rollup.submit", "plan.rollup.approve", "plan.rollup.reject"},
+	},
+}
+
+// toolGroupMethodIndex maps each orch_* tool name to a set of its allowed methods.
+var toolGroupMethodIndex map[string]map[string]bool
+
+func init() {
+	toolGroupMethodIndex = make(map[string]map[string]bool, len(toolGroups))
+	for _, g := range toolGroups {
+		methodSet := make(map[string]bool, len(g.Methods))
+		for _, m := range g.Methods {
+			methodSet[m] = true
+		}
+		toolGroupMethodIndex[g.Name] = methodSet
+	}
+}
 
 type jsonRPCRequest struct {
 	JSONRPC string          `json:"jsonrpc"`
@@ -63,6 +128,8 @@ const (
 func main() {
 	repoPath := flag.String("repo", ".", "repository root path")
 	mode := flag.String("mode", "serve", "execution mode: serve|once")
+	transport := flag.String("transport", "stdio", "transport mode: stdio|http")
+	port := flag.Int("port", 8090, "HTTP port (only used with --transport http)")
 	method := flag.String("method", "", "method for once mode")
 	params := flag.String("params", "{}", "JSON params for once mode")
 	flag.Parse()
@@ -78,7 +145,12 @@ func main() {
 	case "once":
 		runOnce(service, *method, *params)
 	case "serve":
-		runServe(service)
+		switch strings.ToLower(*transport) {
+		case "http":
+			runHTTPServe(service, *port)
+		default:
+			runServe(service)
+		}
 	default:
 		fmt.Fprintf(os.Stderr, "invalid mode: %s\n", *mode)
 		os.Exit(2)
@@ -144,6 +216,58 @@ func runServe(service *orchestrator.Service) {
 			fmt.Fprintf(os.Stderr, "mcp write error: %v\n", err)
 			os.Exit(1)
 		}
+	}
+}
+
+func runHTTPServe(service *orchestrator.Service, port int) {
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/mcp", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		if r.Method != http.MethodPost {
+			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+			return
+		}
+
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			http.Error(w, `{"error":"read body failed"}`, http.StatusBadRequest)
+			return
+		}
+		defer r.Body.Close()
+
+		responsePayload, shouldRespond := handleMCPPayload(service, body)
+
+		w.Header().Set("Content-Type", "application/json")
+		if !shouldRespond {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		w.Write(responsePayload)
+	})
+
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"status":"ok","transport":"http"}`))
+	})
+
+	addr := fmt.Sprintf(":%d", port)
+	log.Printf("codex-orchestrator HTTP server listening on %s\n", addr)
+	if err := http.ListenAndServe(addr, mux); err != nil {
+		log.Fatalf("HTTP server error: %v", err)
 	}
 }
 
@@ -268,28 +392,7 @@ func handleMCPPayload(service *orchestrator.Service, payload []byte) ([]byte, bo
 		response.Result = map[string]any{}
 	case "tools/list":
 		response.Result = map[string]any{
-			"tools": []map[string]any{
-				{
-					"name":        "orchestrator.call",
-					"description": "Call one codex-orchestrator backend method by name.",
-					"inputSchema": map[string]any{
-						"type": "object",
-						"properties": map[string]any{
-							"method": map[string]any{
-								"type":        "string",
-								"description": "Backend method name (e.g. workspace.init, session.open).",
-							},
-							"params": map[string]any{
-								"type":        "object",
-								"description": "Method params object.",
-								"default":     map[string]any{},
-							},
-						},
-						"required":             []string{"method"},
-						"additionalProperties": false,
-					},
-				},
-			},
+			"tools": buildToolsList(),
 		}
 	case "tools/call":
 		result, err := handleToolCall(service, request.Params)
@@ -321,29 +424,120 @@ func handleToolCall(service *orchestrator.Service, rawParams json.RawMessage) (m
 		return nil, fmt.Errorf("invalid tools/call params: %w", err)
 	}
 
-	switch input.Name {
-	case "orchestrator.call":
-		var args orchestratorCallArguments
-		if err := json.Unmarshal(input.Arguments, &args); err != nil {
-			return nil, fmt.Errorf("invalid orchestrator.call arguments: %w", err)
-		}
-		if strings.TrimSpace(args.Method) == "" {
-			return nil, fmt.Errorf("orchestrator.call requires arguments.method")
-		}
-
-		params := args.Params
-		if len(bytesTrimSpace(params)) == 0 {
-			params = json.RawMessage(`{}`)
-		}
-
-		result, err := service.Handle(context.Background(), args.Method, params)
-		if err != nil {
-			return toolErrorResult(err.Error()), nil
-		}
-		return toolSuccessResult(result)
+	switch {
+	case input.Name == "orchestrator.call":
+		return handleOrchestratorCall(service, input.Arguments)
+	case toolGroupMethodIndex[input.Name] != nil:
+		return handleGroupToolCall(service, input.Name, input.Arguments)
 	default:
 		return toolErrorResult(fmt.Sprintf("unknown tool: %s", input.Name)), nil
 	}
+}
+
+func buildToolsList() []map[string]any {
+	tools := make([]map[string]any, 0, len(toolGroups)+1)
+
+	// Legacy orchestrator.call tool (accepts all methods).
+	tools = append(tools, map[string]any{
+		"name":        "orchestrator.call",
+		"description": "Call one codex-orchestrator backend method by name.",
+		"inputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"method": map[string]any{
+					"type":        "string",
+					"description": "Backend method name (e.g. workspace.init, session.open).",
+				},
+				"params": map[string]any{
+					"type":        "object",
+					"description": "Method params object.",
+					"default":     map[string]any{},
+				},
+			},
+			"required":             []string{"method"},
+			"additionalProperties": false,
+		},
+	})
+
+	// Domain-specific tool groups.
+	for _, g := range toolGroups {
+		enumValues := make([]any, len(g.Methods))
+		for i, m := range g.Methods {
+			enumValues[i] = m
+		}
+		tools = append(tools, map[string]any{
+			"name":        g.Name,
+			"description": g.Description,
+			"inputSchema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"method": map[string]any{
+						"type":        "string",
+						"description": "Backend method name.",
+						"enum":        enumValues,
+					},
+					"params": map[string]any{
+						"type":        "object",
+						"description": "Method params object.",
+						"default":     map[string]any{},
+					},
+				},
+				"required":             []string{"method"},
+				"additionalProperties": false,
+			},
+		})
+	}
+
+	return tools
+}
+
+func handleOrchestratorCall(service *orchestrator.Service, arguments json.RawMessage) (map[string]any, error) {
+	var args orchestratorCallArguments
+	if err := json.Unmarshal(arguments, &args); err != nil {
+		return nil, fmt.Errorf("invalid orchestrator.call arguments: %w", err)
+	}
+	if strings.TrimSpace(args.Method) == "" {
+		return nil, fmt.Errorf("orchestrator.call requires arguments.method")
+	}
+
+	params := args.Params
+	if len(bytesTrimSpace(params)) == 0 {
+		params = json.RawMessage(`{}`)
+	}
+
+	result, err := service.Handle(context.Background(), args.Method, params)
+	if err != nil {
+		return toolErrorResult(err.Error()), nil
+	}
+	return toolSuccessResult(result)
+}
+
+func handleGroupToolCall(service *orchestrator.Service, toolName string, arguments json.RawMessage) (map[string]any, error) {
+	var args orchestratorCallArguments
+	if err := json.Unmarshal(arguments, &args); err != nil {
+		return nil, fmt.Errorf("invalid %s arguments: %w", toolName, err)
+	}
+
+	method := strings.TrimSpace(args.Method)
+	if method == "" {
+		return nil, fmt.Errorf("%s requires arguments.method", toolName)
+	}
+
+	allowedMethods := toolGroupMethodIndex[toolName]
+	if !allowedMethods[method] {
+		return toolErrorResult(fmt.Sprintf("method '%s' is not valid for tool '%s'", method, toolName)), nil
+	}
+
+	params := args.Params
+	if len(bytesTrimSpace(params)) == 0 {
+		params = json.RawMessage(`{}`)
+	}
+
+	result, err := service.Handle(context.Background(), method, params)
+	if err != nil {
+		return toolErrorResult(err.Error()), nil
+	}
+	return toolSuccessResult(result)
 }
 
 func toolSuccessResult(result any) (map[string]any, error) {
