@@ -13,6 +13,8 @@ const (
 	defaultMainMergeLockTTLSeconds = 600
 )
 
+const sessionSelectColumns = `id, agent_role, owner, repo_path, terminal_fingerprint, intent, main_worktree_id, session_root_worktree_id, root_thread_id, tmux_session_name, runtime_state, delegation_state, delegation_root_thread_id, delegation_issued_at, delegation_acked_at, started_at, last_seen_at, status`
+
 func (store *Store) OpenSession(ctx context.Context, args SessionOpenArgs) (Session, error) {
 	agentRole := strings.TrimSpace(args.AgentRole)
 	if agentRole == "" {
@@ -40,8 +42,8 @@ func (store *Store) OpenSession(ctx context.Context, args SessionOpenArgs) (Sess
 	now := nowTimestamp()
 	result, err := transaction.ExecContext(
 		ctx,
-		`INSERT INTO sessions(agent_role, owner, started_at, last_seen_at, status, repo_path, terminal_fingerprint, intent, root_thread_id, tmux_session_name, runtime_state)
-		 VALUES(?, ?, ?, ?, 'opened', ?, ?, ?, NULL, NULL, NULL)`,
+		`INSERT INTO sessions(agent_role, owner, started_at, last_seen_at, status, repo_path, terminal_fingerprint, intent, root_thread_id, tmux_session_name, runtime_state, delegation_state)
+		 VALUES(?, ?, ?, ?, 'opened', ?, ?, ?, NULL, NULL, NULL, 'caller_active')`,
 		agentRole,
 		owner,
 		now,
@@ -64,7 +66,7 @@ func (store *Store) OpenSession(ctx context.Context, args SessionOpenArgs) (Sess
 
 	row := transaction.QueryRowContext(
 		ctx,
-		`SELECT id, agent_role, owner, repo_path, terminal_fingerprint, intent, main_worktree_id, session_root_worktree_id, root_thread_id, tmux_session_name, runtime_state, started_at, last_seen_at, status
+		`SELECT `+sessionSelectColumns+`
 		 FROM sessions WHERE id = ?`,
 		sessionID,
 	)
@@ -107,7 +109,7 @@ func (store *Store) HeartbeatSession(ctx context.Context, sessionID int64) (Sess
 
 	row := transaction.QueryRowContext(
 		ctx,
-		`SELECT id, agent_role, owner, repo_path, terminal_fingerprint, intent, main_worktree_id, session_root_worktree_id, root_thread_id, tmux_session_name, runtime_state, started_at, last_seen_at, status
+		`SELECT `+sessionSelectColumns+`
 		 FROM sessions WHERE id = ?`,
 		sessionID,
 	)
@@ -129,8 +131,8 @@ func (store *Store) CloseSession(ctx context.Context, sessionID int64) (Session,
 }
 
 func (store *Store) UpdateSession(ctx context.Context, sessionID int64, args SessionUpdateArgs) (Session, error) {
-	setClauses := make([]string, 0, 8)
-	parameters := make([]any, 0, 12)
+	setClauses := make([]string, 0, 16)
+	parameters := make([]any, 0, 24)
 
 	if args.Status != nil {
 		setClauses = append(setClauses, "status = ?")
@@ -160,6 +162,22 @@ func (store *Store) UpdateSession(ctx context.Context, sessionID int64, args Ses
 		setClauses = append(setClauses, "intent = ?")
 		parameters = append(parameters, *args.Intent)
 	}
+	if args.DelegationState != nil {
+		setClauses = append(setClauses, "delegation_state = ?")
+		parameters = append(parameters, *args.DelegationState)
+	}
+	if args.DelegationRootThreadID != nil {
+		setClauses = append(setClauses, "delegation_root_thread_id = ?")
+		parameters = append(parameters, *args.DelegationRootThreadID)
+	}
+	if args.DelegationIssuedAt != nil {
+		setClauses = append(setClauses, "delegation_issued_at = ?")
+		parameters = append(parameters, *args.DelegationIssuedAt)
+	}
+	if args.DelegationAckedAt != nil {
+		setClauses = append(setClauses, "delegation_acked_at = ?")
+		parameters = append(parameters, *args.DelegationAckedAt)
+	}
 
 	setClauses = append(setClauses, "last_seen_at = ?")
 	parameters = append(parameters, nowTimestamp())
@@ -186,7 +204,7 @@ func (store *Store) UpdateSession(ctx context.Context, sessionID int64, args Ses
 
 	row := transaction.QueryRowContext(
 		ctx,
-		`SELECT id, agent_role, owner, repo_path, terminal_fingerprint, intent, main_worktree_id, session_root_worktree_id, root_thread_id, tmux_session_name, runtime_state, started_at, last_seen_at, status
+		`SELECT `+sessionSelectColumns+`
 		 FROM sessions WHERE id = ?`,
 		sessionID,
 	)
@@ -204,7 +222,7 @@ func (store *Store) UpdateSession(ctx context.Context, sessionID int64, args Ses
 func (store *Store) GetSessionByID(ctx context.Context, sessionID int64) (Session, error) {
 	row := store.database.QueryRowContext(
 		ctx,
-		`SELECT id, agent_role, owner, repo_path, terminal_fingerprint, intent, main_worktree_id, session_root_worktree_id, root_thread_id, tmux_session_name, runtime_state, started_at, last_seen_at, status
+		`SELECT `+sessionSelectColumns+`
 		 FROM sessions WHERE id = ?`,
 		sessionID,
 	)
@@ -299,7 +317,7 @@ func (store *Store) ListResumeCandidates(ctx context.Context, repoPath string, r
 
 	rows, err := store.database.QueryContext(
 		ctx,
-		`SELECT id, agent_role, owner, repo_path, terminal_fingerprint, intent, main_worktree_id, session_root_worktree_id, root_thread_id, tmux_session_name, runtime_state, started_at, last_seen_at, status
+		`SELECT `+sessionSelectColumns+`
 		 FROM sessions
 		 WHERE repo_path = ?
 		   AND id != ?
@@ -939,6 +957,10 @@ func scanSession(scanner rowScanner) (Session, error) {
 	var rootThreadID sql.NullInt64
 	var tmuxSessionName sql.NullString
 	var runtimeState sql.NullString
+	var delegationState sql.NullString
+	var delegationRootThreadID sql.NullInt64
+	var delegationIssuedAt sql.NullString
+	var delegationAckedAt sql.NullString
 	err := scanner.Scan(
 		&session.ID,
 		&session.AgentRole,
@@ -951,6 +973,10 @@ func scanSession(scanner rowScanner) (Session, error) {
 		&rootThreadID,
 		&tmuxSessionName,
 		&runtimeState,
+		&delegationState,
+		&delegationRootThreadID,
+		&delegationIssuedAt,
+		&delegationAckedAt,
 		&session.StartedAt,
 		&session.LastSeenAt,
 		&session.Status,
@@ -982,6 +1008,18 @@ func scanSession(scanner rowScanner) (Session, error) {
 	}
 	if runtimeState.Valid {
 		session.RuntimeState = &runtimeState.String
+	}
+	if delegationState.Valid {
+		session.DelegationState = &delegationState.String
+	}
+	if delegationRootThreadID.Valid {
+		session.DelegationRootThreadID = &delegationRootThreadID.Int64
+	}
+	if delegationIssuedAt.Valid {
+		session.DelegationIssuedAt = &delegationIssuedAt.String
+	}
+	if delegationAckedAt.Valid {
+		session.DelegationAckedAt = &delegationAckedAt.String
 	}
 	return session, nil
 }

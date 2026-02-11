@@ -16,12 +16,16 @@ import (
 )
 
 const (
-	defaultTmuxEnsureTimeout = 120 * time.Second
-	defaultAgentGuidePath    = ".codex/agents/codex-collab-orchestrator/merge-reviewer.md"
-	defaultRootWindowName    = "root"
-	defaultChildWindowName   = "children"
-	defaultCodexCommand      = "codex --no-alt-screen"
-	defaultMaxChildThreads   = 6
+	defaultTmuxEnsureTimeout  = 120 * time.Second
+	defaultRootAgentGuidePath = ".codex/agents/codex-collab-orchestrator/codex/root-orchestrator.md"
+	defaultWorkerGuidePath    = ".codex/agents/codex-collab-orchestrator/codex/main-worker.md"
+	defaultMergeReviewerPath  = ".codex/agents/codex-collab-orchestrator/codex/merge-reviewer.md"
+	defaultDocMirrorPath      = ".codex/agents/codex-collab-orchestrator/codex/doc-mirror-manager.md"
+	defaultPlanArchitectPath  = ".codex/agents/codex-collab-orchestrator/codex/plan-architect.md"
+	defaultRootWindowName     = "root"
+	defaultChildWindowName    = "children"
+	defaultCodexCommand       = "codex --no-alt-screen"
+	defaultMaxChildThreads    = 6
 )
 
 func (service *Service) ensureTmux(ctx context.Context, input runtimeTmuxEnsureInput) (map[string]any, error) {
@@ -277,7 +281,7 @@ func (service *Service) requestAutoMergeReview(ctx context.Context, input mergeR
 	}
 	agentGuidePath := strings.TrimSpace(input.AgentGuidePath)
 	if agentGuidePath == "" {
-		agentGuidePath = defaultAgentGuidePath
+		agentGuidePath = defaultMergeReviewerPath
 	}
 
 	thread, attachInfo, tmuxResult, spawnErr := service.spawnChildThreadInternal(ctx, threadChildSpawnInput{
@@ -388,16 +392,31 @@ func (service *Service) ensureRootThreadInternal(ctx context.Context, input thre
 	if role == "" {
 		role = "session-root"
 	}
+	resolvedAgentGuidePath := service.resolveAgentGuidePathForRole(role, input.AgentGuidePath)
+	normalizedTaskSpecInput := normalizeRawJSON(input.TaskSpec)
+	hasTaskSpecInput := normalizedTaskSpecInput != ""
+	hasScopeInput := len(input.ScopeTaskIDs) > 0 || len(input.ScopeCaseIDs) > 0 || len(input.ScopeNodeIDs) > 0
+	taskSpecJSON := normalizedTaskSpecInput
+	if taskSpecJSON == "" {
+		taskSpecJSON = service.defaultTaskSpecJSON("session-root", input.Title, input.Objective, nil)
+	}
+	scopeTaskIDsJSON := marshalInt64Slice(input.ScopeTaskIDs)
+	scopeCaseIDsJSON := marshalInt64Slice(input.ScopeCaseIDs)
+	scopeNodeIDsJSON := marshalInt64Slice(input.ScopeNodeIDs)
 
 	if rootThread == nil {
 		createdThread, createErr := service.store.CreateThread(ctx, store.ThreadCreateArgs{
-			SessionID:      session.ID,
-			ParentThreadID: nil,
-			Role:           role,
-			Status:         "planned",
-			Title:          input.Title,
-			Objective:      input.Objective,
-			AgentGuidePath: input.AgentGuidePath,
+			SessionID:        session.ID,
+			ParentThreadID:   nil,
+			Role:             role,
+			Status:           "planned",
+			Title:            input.Title,
+			Objective:        input.Objective,
+			AgentGuidePath:   resolvedAgentGuidePath,
+			TaskSpecJSON:     taskSpecJSON,
+			ScopeTaskIDsJSON: scopeTaskIDsJSON,
+			ScopeCaseIDsJSON: scopeCaseIDsJSON,
+			ScopeNodeIDsJSON: scopeNodeIDsJSON,
 		})
 		if createErr != nil {
 			return store.Session{}, store.Thread{}, nil, createErr
@@ -417,10 +436,23 @@ func (service *Service) ensureRootThreadInternal(ctx context.Context, input thre
 		return store.Session{}, store.Thread{}, nil, err
 	}
 
-	rootThreadUpdated, err := service.store.UpdateThread(ctx, rootThread.ID, store.ThreadUpdateArgs{
+	rootThreadUpdateArgs := store.ThreadUpdateArgs{
 		TmuxSessionName: &tmuxSessionName,
 		TmuxWindowName:  &rootWindowName,
-	})
+	}
+	if hasTaskSpecInput || rootThread.TaskSpecJSON == nil {
+		rootThreadUpdateArgs.TaskSpecJSON = &taskSpecJSON
+	}
+	if hasScopeInput || rootThread.ScopeTaskIDsJSON == nil {
+		rootThreadUpdateArgs.ScopeTaskIDsJSON = &scopeTaskIDsJSON
+	}
+	if hasScopeInput || rootThread.ScopeCaseIDsJSON == nil {
+		rootThreadUpdateArgs.ScopeCaseIDsJSON = &scopeCaseIDsJSON
+	}
+	if hasScopeInput || rootThread.ScopeNodeIDsJSON == nil {
+		rootThreadUpdateArgs.ScopeNodeIDsJSON = &scopeNodeIDsJSON
+	}
+	rootThreadUpdated, err := service.store.UpdateThread(ctx, rootThread.ID, rootThreadUpdateArgs)
 	if err != nil {
 		return store.Session{}, store.Thread{}, nil, err
 	}
@@ -470,9 +502,9 @@ func (service *Service) ensureRootThreadInternal(ctx context.Context, input thre
 			if launchCommand == "" {
 				initialPrompt := strings.TrimSpace(input.InitialPrompt)
 				if initialPrompt == "" {
-					initialPrompt = defaultRootPrompt(session.ID, rootThreadUpdated, input)
+					initialPrompt = service.defaultRootPrompt(session, rootThreadUpdated, input, service.resolveChildTmuxSessionName(input.ChildSessionName, rootThreadUpdated.ID))
 				}
-				launchCommand = service.defaultCodexLaunchCommand(workdir, input.CodexCommand, input.AgentGuidePath, initialPrompt)
+				launchCommand = service.defaultCodexLaunchCommand(workdir, input.CodexCommand, resolvedAgentGuidePath, initialPrompt)
 			}
 			if _, launchErr := service.runCommand(ctx, "tmux", "send-keys", "-t", rootPaneID, launchCommand, "C-m"); launchErr != nil {
 				return store.Session{}, store.Thread{}, nil, launchErr
@@ -496,11 +528,10 @@ func (service *Service) spawnChildThreadInternal(ctx context.Context, input thre
 	}
 
 	session, rootThread, tmuxResult, err := service.ensureRootThreadInternal(ctx, threadRootEnsureInput{
-		SessionID:      input.SessionID,
-		EnsureTmux:     input.EnsureTmux,
-		AutoInstall:    input.AutoInstall,
-		AgentGuidePath: input.AgentGuidePath,
-		LaunchCodex:    pointerToBool(false),
+		SessionID:   input.SessionID,
+		EnsureTmux:  input.EnsureTmux,
+		AutoInstall: input.AutoInstall,
+		LaunchCodex: pointerToBool(false),
 	})
 	if err != nil {
 		return store.Thread{}, nil, nil, err
@@ -522,17 +553,29 @@ func (service *Service) spawnChildThreadInternal(ctx context.Context, input thre
 	if role == "" {
 		role = "worker"
 	}
+	resolvedGuidePath := service.resolveAgentGuidePathForRole(role, input.AgentGuidePath)
 	agentOverride := normalizeAgentOverride(input.AgentOverride)
+	taskSpecJSON := normalizeRawJSON(input.TaskSpec)
+	if taskSpecJSON == "" {
+		taskSpecJSON = service.defaultTaskSpecJSON(role, input.Title, input.Objective, nil)
+	}
+	scopeTaskIDsJSON := marshalInt64Slice(input.ScopeTaskIDs)
+	scopeCaseIDsJSON := marshalInt64Slice(input.ScopeCaseIDs)
+	scopeNodeIDsJSON := marshalInt64Slice(input.ScopeNodeIDs)
 	createdThread, err := service.store.CreateThread(ctx, store.ThreadCreateArgs{
-		SessionID:      input.SessionID,
-		ParentThreadID: &parentThreadID,
-		WorktreeID:     input.WorktreeID,
-		Role:           role,
-		Status:         "planned",
-		Title:          input.Title,
-		Objective:      input.Objective,
-		AgentGuidePath: input.AgentGuidePath,
-		AgentOverride:  agentOverride,
+		SessionID:        input.SessionID,
+		ParentThreadID:   &parentThreadID,
+		WorktreeID:       input.WorktreeID,
+		Role:             role,
+		Status:           "planned",
+		Title:            input.Title,
+		Objective:        input.Objective,
+		AgentGuidePath:   resolvedGuidePath,
+		AgentOverride:    agentOverride,
+		TaskSpecJSON:     taskSpecJSON,
+		ScopeTaskIDsJSON: scopeTaskIDsJSON,
+		ScopeCaseIDsJSON: scopeCaseIDsJSON,
+		ScopeNodeIDsJSON: scopeNodeIDsJSON,
 	})
 	if err != nil {
 		return store.Thread{}, nil, nil, err
@@ -575,9 +618,9 @@ func (service *Service) spawnChildThreadInternal(ctx context.Context, input thre
 	if launchCommand == "" && launchCodex {
 		initialPrompt := strings.TrimSpace(input.InitialPrompt)
 		if initialPrompt == "" {
-			initialPrompt = defaultChildPrompt(input.SessionID, rootThread.ID, createdThread, input)
+			initialPrompt = service.defaultChildPrompt(input.SessionID, rootThread.ID, createdThread, input)
 		}
-		launchCommand = service.defaultCodexLaunchCommand(workdir, input.CodexCommand, input.AgentGuidePath, initialPrompt)
+		launchCommand = service.defaultCodexLaunchCommand(workdir, input.CodexCommand, resolvedGuidePath, initialPrompt)
 	}
 	if strings.TrimSpace(launchCommand) != "" {
 		if _, err := service.runCommand(ctx, "tmux", "send-keys", "-t", paneID, launchCommand, "C-m"); err != nil {
@@ -884,7 +927,104 @@ func normalizeWindowName(windowName string, fallback string) string {
 	return trimmedWindowName
 }
 
-func defaultRootPrompt(sessionID int64, rootThread store.Thread, input threadRootEnsureInput) string {
+func (service *Service) resolveAgentGuidePathForRole(role string, override string) string {
+	resolved := strings.TrimSpace(override)
+	if resolved != "" {
+		return resolved
+	}
+	switch strings.ToLower(strings.TrimSpace(role)) {
+	case "session-root", "root", "orchestrator":
+		return defaultRootAgentGuidePath
+	case "merge-reviewer":
+		return defaultMergeReviewerPath
+	case "doc-mirror-manager":
+		return defaultDocMirrorPath
+	case "plan-architect":
+		return defaultPlanArchitectPath
+	default:
+		return defaultWorkerGuidePath
+	}
+}
+
+func (service *Service) readAgentTemplate(path string) string {
+	normalized := normalizePathForThread(path)
+	if strings.TrimSpace(normalized) == "" {
+		return ""
+	}
+	if !filepath.IsAbs(normalized) {
+		normalized = filepath.Join(service.repoPath, normalized)
+	}
+	content, err := os.ReadFile(normalized)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(content))
+}
+
+func (service *Service) defaultTaskSpecJSON(role string, title string, objective string, extra map[string]any) string {
+	spec := map[string]any{
+		"thread_role": strings.TrimSpace(role),
+	}
+	if strings.TrimSpace(title) != "" {
+		spec["title"] = strings.TrimSpace(title)
+	}
+	if strings.TrimSpace(objective) != "" {
+		spec["objective"] = strings.TrimSpace(objective)
+	}
+	for key, value := range extra {
+		spec[key] = value
+	}
+	encoded, err := json.Marshal(spec)
+	if err != nil {
+		return "{}"
+	}
+	return string(encoded)
+}
+
+func marshalInt64Slice(values []int64) string {
+	if len(values) == 0 {
+		return "[]"
+	}
+	encoded, err := json.Marshal(values)
+	if err != nil {
+		return "[]"
+	}
+	return string(encoded)
+}
+
+func decodeJSONForPrompt(raw string) any {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return map[string]any{}
+	}
+	var decoded any
+	if err := json.Unmarshal([]byte(trimmed), &decoded); err != nil {
+		return trimmed
+	}
+	return decoded
+}
+
+func decodeInt64JSON(raw string) []int64 {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return []int64{}
+	}
+	values := make([]int64, 0)
+	if err := json.Unmarshal([]byte(trimmed), &values); err != nil {
+		return []int64{}
+	}
+	return values
+}
+
+func prettyJSON(value any) string {
+	encoded, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return "{}"
+	}
+	return string(encoded)
+}
+
+func (service *Service) defaultRootPrompt(session store.Session, rootThread store.Thread, input threadRootEnsureInput, childSessionName string) string {
 	objective := strings.TrimSpace(input.Objective)
 	if objective == "" {
 		objective = strings.TrimSpace(valueOrEmpty(rootThread.Objective))
@@ -900,15 +1040,64 @@ func defaultRootPrompt(sessionID int64, rootThread store.Thread, input threadRoo
 		title = "root orchestration"
 	}
 
+	taskSpecJSON := strings.TrimSpace(valueOrEmpty(rootThread.TaskSpecJSON))
+	if taskSpecJSON == "" {
+		taskSpecJSON = service.defaultTaskSpecJSON("session-root", title, objective, nil)
+	}
+	scopeTaskIDs := decodeInt64JSON(valueOrEmpty(rootThread.ScopeTaskIDsJSON))
+	scopeCaseIDs := decodeInt64JSON(valueOrEmpty(rootThread.ScopeCaseIDsJSON))
+	scopeNodeIDs := decodeInt64JSON(valueOrEmpty(rootThread.ScopeNodeIDsJSON))
+	maxConcurrentChildren := intValueOrDefault(input.MaxConcurrentChildren, defaultMaxChildThreads)
+	if maxConcurrentChildren <= 0 {
+		maxConcurrentChildren = defaultMaxChildThreads
+	}
+	templateText := service.readAgentTemplate(service.resolveAgentGuidePathForRole("session-root", input.AgentGuidePath))
+	if templateText == "" {
+		templateText = "# Root Orchestrator\n- Manage orchestration only from this tmux root session."
+	}
+	contextPayload := map[string]any{
+		"thread": map[string]any{
+			"role":          "session-root",
+			"session_id":    session.ID,
+			"thread_id":     rootThread.ID,
+			"title":         title,
+			"objective":     objective,
+			"tmux_session":  valueOrEmpty(rootThread.TmuxSessionName),
+			"child_session": childSessionName,
+		},
+		"runtime": map[string]any{
+			"max_concurrent_children": maxConcurrentChildren,
+			"ack_method":              "thread.root.handoff_ack",
+			"delegation_contract":     "caller_cli_bootstrap_only",
+		},
+		"scope": map[string]any{
+			"task_ids": scopeTaskIDs,
+			"case_ids": scopeCaseIDs,
+			"node_ids": scopeNodeIDs,
+		},
+		"task_spec": decodeJSONForPrompt(taskSpecJSON),
+	}
+
 	return fmt.Sprintf(
-		"You are the root orchestrator thread for codex-orchestrator session %d.\nTask: %s\nObjective: %s\n\nOperate from this root tmux session. Create child threads for implementation, keep state updated through MCP methods, and wait for direct user instructions when blocked.",
-		sessionID,
-		title,
-		objective,
+		`%s
+
+# Runtime Handoff
+~~~json
+%s
+~~~
+
+Execution rules:
+1. Call thread.root.handoff_ack once before orchestration work.
+2. Operate only from this root tmux session; caller CLI does not continue orchestration.
+3. Read global workflow contract as needed, but directly inspect state only for your scoped task/case/node IDs.
+4. Delegate concrete implementation to child threads and keep checkpoints/current_ref updated.
+5. If user intervention is needed, pause and wait in this root thread.`,
+		templateText,
+		prettyJSON(contextPayload),
 	)
 }
 
-func defaultChildPrompt(sessionID int64, rootThreadID int64, childThread store.Thread, input threadChildSpawnInput) string {
+func (service *Service) defaultChildPrompt(sessionID int64, rootThreadID int64, childThread store.Thread, input threadChildSpawnInput) string {
 	objective := strings.TrimSpace(input.Objective)
 	if objective == "" {
 		objective = strings.TrimSpace(valueOrEmpty(childThread.Objective))
@@ -919,12 +1108,50 @@ func defaultChildPrompt(sessionID int64, rootThreadID int64, childThread store.T
 	if objective == "" {
 		objective = "execute the assigned case and report progress"
 	}
+	role := strings.TrimSpace(childThread.Role)
+	if role == "" {
+		role = "worker"
+	}
+	taskSpecJSON := strings.TrimSpace(valueOrEmpty(childThread.TaskSpecJSON))
+	if taskSpecJSON == "" {
+		taskSpecJSON = service.defaultTaskSpecJSON(role, strings.TrimSpace(valueOrEmpty(childThread.Title)), objective, nil)
+	}
+	templateText := service.readAgentTemplate(service.resolveAgentGuidePathForRole(role, input.AgentGuidePath))
+	if templateText == "" {
+		templateText = "# Child Worker\n- Execute the assigned scope and report back."
+	}
+	contextPayload := map[string]any{
+		"thread": map[string]any{
+			"role":           role,
+			"session_id":     sessionID,
+			"root_thread_id": rootThreadID,
+			"thread_id":      childThread.ID,
+			"title":          strings.TrimSpace(valueOrEmpty(childThread.Title)),
+			"objective":      objective,
+		},
+		"scope": map[string]any{
+			"task_ids": decodeInt64JSON(valueOrEmpty(childThread.ScopeTaskIDsJSON)),
+			"case_ids": decodeInt64JSON(valueOrEmpty(childThread.ScopeCaseIDsJSON)),
+			"node_ids": decodeInt64JSON(valueOrEmpty(childThread.ScopeNodeIDsJSON)),
+		},
+		"task_spec": decodeJSONForPrompt(taskSpecJSON),
+	}
+
 	return fmt.Sprintf(
-		"You are child thread %d under root thread %d for session %d.\nTask: %s\n\nWork only on this assignment, update progress via orchestrator state/checkpoints, and pause for user or root-thread follow-up when blocked.",
-		childThread.ID,
-		rootThreadID,
-		sessionID,
-		objective,
+		`%s
+
+# Runtime Assignment
+~~~json
+%s
+~~~
+
+Execution rules:
+1. Work only on this thread assignment and scope.
+2. Read/update orchestrator state only for your scoped IDs and your own progress.
+3. Report blockers and completion status back to the root thread.
+4. Pause for user/root follow-up instead of expanding scope autonomously.`,
+		templateText,
+		prettyJSON(contextPayload),
 	)
 }
 
@@ -1084,7 +1311,7 @@ func valueOrEmpty(value *string) string {
 	return *value
 }
 
-func normalizeAgentOverride(raw json.RawMessage) string {
+func normalizeRawJSON(raw json.RawMessage) string {
 	if len(raw) == 0 {
 		return ""
 	}
@@ -1093,6 +1320,10 @@ func normalizeAgentOverride(raw json.RawMessage) string {
 		return ""
 	}
 	return trimmed
+}
+
+func normalizeAgentOverride(raw json.RawMessage) string {
+	return normalizeRawJSON(raw)
 }
 
 func shellQuote(value string) string {

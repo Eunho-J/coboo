@@ -22,10 +22,14 @@ func TestThreadLifecycle(t *testing.T) {
 	}
 
 	rootThread, err := store.CreateThread(context, ThreadCreateArgs{
-		SessionID: session.ID,
-		Role:      "session-root",
-		Status:    "planned",
-		Title:     "session root",
+		SessionID:        session.ID,
+		Role:             "session-root",
+		Status:           "planned",
+		Title:            "session root",
+		TaskSpecJSON:     `{"title":"session root","objective":"bootstrap orchestration"}`,
+		ScopeTaskIDsJSON: `[1,2]`,
+		ScopeCaseIDsJSON: `[11]`,
+		ScopeNodeIDsJSON: `[101]`,
 	})
 	if err != nil {
 		t.Fatalf("failed to create thread: %v", err)
@@ -60,6 +64,12 @@ func TestThreadLifecycle(t *testing.T) {
 	}
 	if updatedThread.TmuxPaneID == nil || *updatedThread.TmuxPaneID != tmuxPane {
 		t.Fatalf("expected tmux pane %s, got %+v", tmuxPane, updatedThread.TmuxPaneID)
+	}
+	if updatedThread.TaskSpecJSON == nil || *updatedThread.TaskSpecJSON == "" {
+		t.Fatalf("expected persisted task_spec_json, got %+v", updatedThread.TaskSpecJSON)
+	}
+	if updatedThread.ScopeTaskIDsJSON == nil || *updatedThread.ScopeTaskIDsJSON != `[1,2]` {
+		t.Fatalf("expected scope_task_ids_json [1,2], got %+v", updatedThread.ScopeTaskIDsJSON)
 	}
 }
 
@@ -191,6 +201,58 @@ func TestSessionRuntimeFields(t *testing.T) {
 	}
 	if event.SessionID == nil || *event.SessionID != updatedSession.ID {
 		t.Fatalf("expected event session_id=%d, got %+v", updatedSession.ID, event.SessionID)
+	}
+}
+
+func TestSessionDelegationFields(t *testing.T) {
+	context := context.Background()
+	store := openThreadTestStore(t)
+	defer store.Close()
+
+	session, err := store.OpenSession(context, SessionOpenArgs{
+		AgentRole: "codex",
+		Owner:     "owner-a",
+		RepoPath:  "/tmp/repo-a",
+		Intent:    "new_work",
+	})
+	if err != nil {
+		t.Fatalf("failed to open session: %v", err)
+	}
+
+	rootThread, err := store.CreateThread(context, ThreadCreateArgs{
+		SessionID: session.ID,
+		Role:      "session-root",
+		Status:    "running",
+	})
+	if err != nil {
+		t.Fatalf("failed to create root thread: %v", err)
+	}
+
+	state := "delegated"
+	issuedAt := "2026-02-11T10:00:00Z"
+	ackedAt := "2026-02-11T10:01:00Z"
+	updatedSession, err := store.UpdateSession(context, session.ID, SessionUpdateArgs{
+		RootThreadID:           &rootThread.ID,
+		DelegationState:        &state,
+		DelegationRootThreadID: &rootThread.ID,
+		DelegationIssuedAt:     &issuedAt,
+		DelegationAckedAt:      &ackedAt,
+	})
+	if err != nil {
+		t.Fatalf("failed to update delegation fields: %v", err)
+	}
+
+	if updatedSession.DelegationState == nil || *updatedSession.DelegationState != state {
+		t.Fatalf("expected delegation_state=%s, got %+v", state, updatedSession.DelegationState)
+	}
+	if updatedSession.DelegationRootThreadID == nil || *updatedSession.DelegationRootThreadID != rootThread.ID {
+		t.Fatalf("expected delegation_root_thread_id=%d, got %+v", rootThread.ID, updatedSession.DelegationRootThreadID)
+	}
+	if updatedSession.DelegationIssuedAt == nil || *updatedSession.DelegationIssuedAt != issuedAt {
+		t.Fatalf("expected delegation_issued_at=%s, got %+v", issuedAt, updatedSession.DelegationIssuedAt)
+	}
+	if updatedSession.DelegationAckedAt == nil || *updatedSession.DelegationAckedAt != ackedAt {
+		t.Fatalf("expected delegation_acked_at=%s, got %+v", ackedAt, updatedSession.DelegationAckedAt)
 	}
 }
 

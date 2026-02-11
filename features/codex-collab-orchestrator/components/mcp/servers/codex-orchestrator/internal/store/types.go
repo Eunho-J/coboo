@@ -83,20 +83,24 @@ type ResumeState struct {
 }
 
 type Session struct {
-	ID                    int64   `json:"id"`
-	AgentRole             string  `json:"agent_role"`
-	Owner                 string  `json:"owner"`
-	RepoPath              *string `json:"repo_path,omitempty"`
-	TerminalFingerprint   *string `json:"terminal_fingerprint,omitempty"`
-	Intent                *string `json:"intent,omitempty"`
-	MainWorktreeID        *int64  `json:"main_worktree_id,omitempty"`
-	SessionRootWorktreeID *int64  `json:"session_root_worktree_id,omitempty"`
-	RootThreadID          *int64  `json:"root_thread_id,omitempty"`
-	TmuxSessionName       *string `json:"tmux_session_name,omitempty"`
-	RuntimeState          *string `json:"runtime_state,omitempty"`
-	StartedAt             string  `json:"started_at"`
-	LastSeenAt            string  `json:"last_seen_at"`
-	Status                string  `json:"status"`
+	ID                     int64   `json:"id"`
+	AgentRole              string  `json:"agent_role"`
+	Owner                  string  `json:"owner"`
+	RepoPath               *string `json:"repo_path,omitempty"`
+	TerminalFingerprint    *string `json:"terminal_fingerprint,omitempty"`
+	Intent                 *string `json:"intent,omitempty"`
+	MainWorktreeID         *int64  `json:"main_worktree_id,omitempty"`
+	SessionRootWorktreeID  *int64  `json:"session_root_worktree_id,omitempty"`
+	RootThreadID           *int64  `json:"root_thread_id,omitempty"`
+	TmuxSessionName        *string `json:"tmux_session_name,omitempty"`
+	RuntimeState           *string `json:"runtime_state,omitempty"`
+	DelegationState        *string `json:"delegation_state,omitempty"`
+	DelegationRootThreadID *int64  `json:"delegation_root_thread_id,omitempty"`
+	DelegationIssuedAt     *string `json:"delegation_issued_at,omitempty"`
+	DelegationAckedAt      *string `json:"delegation_acked_at,omitempty"`
+	StartedAt              string  `json:"started_at"`
+	LastSeenAt             string  `json:"last_seen_at"`
+	Status                 string  `json:"status"`
 }
 
 type ResumeCandidate struct {
@@ -151,24 +155,28 @@ type MainMergeLock struct {
 }
 
 type Thread struct {
-	ID              int64   `json:"id"`
-	SessionID       int64   `json:"session_id"`
-	ParentThreadID  *int64  `json:"parent_thread_id,omitempty"`
-	Role            string  `json:"role"`
-	Status          string  `json:"status"`
-	Title           *string `json:"title,omitempty"`
-	Objective       *string `json:"objective,omitempty"`
-	WorktreeID      *int64  `json:"worktree_id,omitempty"`
-	AgentGuidePath  *string `json:"agent_guide_path,omitempty"`
-	AgentOverride   *string `json:"agent_override,omitempty"`
-	TmuxSessionName *string `json:"tmux_session_name,omitempty"`
-	TmuxWindowName  *string `json:"tmux_window_name,omitempty"`
-	TmuxPaneID      *string `json:"tmux_pane_id,omitempty"`
-	LaunchCommand   *string `json:"launch_command,omitempty"`
-	CreatedAt       string  `json:"created_at"`
-	StartedAt       *string `json:"started_at,omitempty"`
-	CompletedAt     *string `json:"completed_at,omitempty"`
-	UpdatedAt       string  `json:"updated_at"`
+	ID               int64   `json:"id"`
+	SessionID        int64   `json:"session_id"`
+	ParentThreadID   *int64  `json:"parent_thread_id,omitempty"`
+	Role             string  `json:"role"`
+	Status           string  `json:"status"`
+	Title            *string `json:"title,omitempty"`
+	Objective        *string `json:"objective,omitempty"`
+	WorktreeID       *int64  `json:"worktree_id,omitempty"`
+	AgentGuidePath   *string `json:"agent_guide_path,omitempty"`
+	AgentOverride    *string `json:"agent_override,omitempty"`
+	TaskSpecJSON     *string `json:"task_spec_json,omitempty"`
+	ScopeTaskIDsJSON *string `json:"scope_task_ids_json,omitempty"`
+	ScopeCaseIDsJSON *string `json:"scope_case_ids_json,omitempty"`
+	ScopeNodeIDsJSON *string `json:"scope_node_ids_json,omitempty"`
+	TmuxSessionName  *string `json:"tmux_session_name,omitempty"`
+	TmuxWindowName   *string `json:"tmux_window_name,omitempty"`
+	TmuxPaneID       *string `json:"tmux_pane_id,omitempty"`
+	LaunchCommand    *string `json:"launch_command,omitempty"`
+	CreatedAt        string  `json:"created_at"`
+	StartedAt        *string `json:"started_at,omitempty"`
+	CompletedAt      *string `json:"completed_at,omitempty"`
+	UpdatedAt        string  `json:"updated_at"`
 }
 
 type ReviewJob struct {
@@ -314,13 +322,17 @@ type SessionOpenArgs struct {
 }
 
 type SessionUpdateArgs struct {
-	Status                *string
-	MainWorktreeID        *int64
-	SessionRootWorktreeID *int64
-	RootThreadID          *int64
-	TmuxSessionName       *string
-	RuntimeState          *string
-	Intent                *string
+	Status                 *string
+	MainWorktreeID         *int64
+	SessionRootWorktreeID  *int64
+	RootThreadID           *int64
+	TmuxSessionName        *string
+	RuntimeState           *string
+	Intent                 *string
+	DelegationState        *string
+	DelegationRootThreadID *int64
+	DelegationIssuedAt     *string
+	DelegationAckedAt      *string
 }
 
 type WorkCurrentRefUpsertArgs struct {
@@ -342,15 +354,19 @@ type MainMergeRequestArgs struct {
 }
 
 type ThreadCreateArgs struct {
-	SessionID      int64
-	ParentThreadID *int64
-	Role           string
-	Status         string
-	Title          string
-	Objective      string
-	WorktreeID     *int64
-	AgentGuidePath string
-	AgentOverride  string
+	SessionID        int64
+	ParentThreadID   *int64
+	Role             string
+	Status           string
+	Title            string
+	Objective        string
+	WorktreeID       *int64
+	AgentGuidePath   string
+	AgentOverride    string
+	TaskSpecJSON     string
+	ScopeTaskIDsJSON string
+	ScopeCaseIDsJSON string
+	ScopeNodeIDsJSON string
 }
 
 type ThreadFilter struct {
@@ -361,11 +377,15 @@ type ThreadFilter struct {
 }
 
 type ThreadUpdateArgs struct {
-	Status          *string
-	TmuxSessionName *string
-	TmuxWindowName  *string
-	TmuxPaneID      *string
-	LaunchCommand   *string
+	Status           *string
+	TmuxSessionName  *string
+	TmuxWindowName   *string
+	TmuxPaneID       *string
+	LaunchCommand    *string
+	TaskSpecJSON     *string
+	ScopeTaskIDsJSON *string
+	ScopeCaseIDsJSON *string
+	ScopeNodeIDsJSON *string
 }
 
 type ReviewJobCreateArgs struct {

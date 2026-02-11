@@ -9,6 +9,8 @@ import (
 	"strings"
 )
 
+const threadSelectColumns = `id, session_id, parent_thread_id, role, status, title, objective, worktree_id, agent_guide_path, agent_override, task_spec_json, scope_task_ids_json, scope_case_ids_json, scope_node_ids_json, tmux_session_name, tmux_window_name, tmux_pane_id, launch_command, created_at, started_at, completed_at, updated_at`
+
 func (store *Store) CreateThread(ctx context.Context, args ThreadCreateArgs) (Thread, error) {
 	if args.SessionID <= 0 {
 		return Thread{}, errors.New("session_id is required")
@@ -39,9 +41,10 @@ func (store *Store) CreateThread(ctx context.Context, args ThreadCreateArgs) (Th
 		ctx,
 		`INSERT INTO threads(
 			session_id, parent_thread_id, role, status, title, objective, worktree_id,
-			agent_guide_path, agent_override, tmux_session_name, tmux_window_name, tmux_pane_id,
+			agent_guide_path, agent_override, task_spec_json, scope_task_ids_json, scope_case_ids_json, scope_node_ids_json,
+			tmux_session_name, tmux_window_name, tmux_pane_id,
 			launch_command, created_at, started_at, completed_at, updated_at
-		) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?, NULL, ?)`,
+		) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?, NULL, ?)`,
 		args.SessionID,
 		args.ParentThreadID,
 		role,
@@ -51,6 +54,10 @@ func (store *Store) CreateThread(ctx context.Context, args ThreadCreateArgs) (Th
 		args.WorktreeID,
 		nullableText(args.AgentGuidePath),
 		nullableText(args.AgentOverride),
+		nullableText(args.TaskSpecJSON),
+		nullableText(args.ScopeTaskIDsJSON),
+		nullableText(args.ScopeCaseIDsJSON),
+		nullableText(args.ScopeNodeIDsJSON),
 		now,
 		startedAt,
 		now,
@@ -69,9 +76,7 @@ func (store *Store) CreateThread(ctx context.Context, args ThreadCreateArgs) (Th
 
 	row := transaction.QueryRowContext(
 		ctx,
-		`SELECT id, session_id, parent_thread_id, role, status, title, objective, worktree_id,
-		        agent_guide_path, agent_override, tmux_session_name, tmux_window_name, tmux_pane_id,
-		        launch_command, created_at, started_at, completed_at, updated_at
+		`SELECT `+threadSelectColumns+`
 		   FROM threads
 		  WHERE id = ?`,
 		threadID,
@@ -89,9 +94,7 @@ func (store *Store) CreateThread(ctx context.Context, args ThreadCreateArgs) (Th
 func (store *Store) GetThreadByID(ctx context.Context, threadID int64) (Thread, error) {
 	row := store.database.QueryRowContext(
 		ctx,
-		`SELECT id, session_id, parent_thread_id, role, status, title, objective, worktree_id,
-		        agent_guide_path, agent_override, tmux_session_name, tmux_window_name, tmux_pane_id,
-		        launch_command, created_at, started_at, completed_at, updated_at
+		`SELECT `+threadSelectColumns+`
 		   FROM threads
 		  WHERE id = ?`,
 		threadID,
@@ -102,9 +105,7 @@ func (store *Store) GetThreadByID(ctx context.Context, threadID int64) (Thread, 
 func (store *Store) GetSessionRootThread(ctx context.Context, sessionID int64) (*Thread, error) {
 	row := store.database.QueryRowContext(
 		ctx,
-		`SELECT id, session_id, parent_thread_id, role, status, title, objective, worktree_id,
-		        agent_guide_path, agent_override, tmux_session_name, tmux_window_name, tmux_pane_id,
-		        launch_command, created_at, started_at, completed_at, updated_at
+		`SELECT `+threadSelectColumns+`
 		   FROM threads
 		  WHERE session_id = ? AND parent_thread_id IS NULL
 		  ORDER BY id DESC
@@ -123,9 +124,7 @@ func (store *Store) GetSessionRootThread(ctx context.Context, sessionID int64) (
 
 func (store *Store) ListThreads(ctx context.Context, filter ThreadFilter) ([]Thread, error) {
 	query := strings.Builder{}
-	query.WriteString(`SELECT id, session_id, parent_thread_id, role, status, title, objective, worktree_id,
-		                      agent_guide_path, agent_override, tmux_session_name, tmux_window_name, tmux_pane_id,
-		                      launch_command, created_at, started_at, completed_at, updated_at
+	query.WriteString(`SELECT ` + threadSelectColumns + `
 		                 FROM threads
 		                WHERE 1=1`)
 	params := make([]any, 0, 4)
@@ -202,6 +201,22 @@ func (store *Store) UpdateThread(ctx context.Context, threadID int64, args Threa
 		setClauses = append(setClauses, "launch_command = ?")
 		params = append(params, nullableText(*args.LaunchCommand))
 	}
+	if args.TaskSpecJSON != nil {
+		setClauses = append(setClauses, "task_spec_json = ?")
+		params = append(params, nullableText(*args.TaskSpecJSON))
+	}
+	if args.ScopeTaskIDsJSON != nil {
+		setClauses = append(setClauses, "scope_task_ids_json = ?")
+		params = append(params, nullableText(*args.ScopeTaskIDsJSON))
+	}
+	if args.ScopeCaseIDsJSON != nil {
+		setClauses = append(setClauses, "scope_case_ids_json = ?")
+		params = append(params, nullableText(*args.ScopeCaseIDsJSON))
+	}
+	if args.ScopeNodeIDsJSON != nil {
+		setClauses = append(setClauses, "scope_node_ids_json = ?")
+		params = append(params, nullableText(*args.ScopeNodeIDsJSON))
+	}
 	if len(setClauses) == 0 {
 		return store.GetThreadByID(ctx, threadID)
 	}
@@ -230,9 +245,7 @@ func (store *Store) UpdateThread(ctx context.Context, threadID int64, args Threa
 
 	row := transaction.QueryRowContext(
 		ctx,
-		`SELECT id, session_id, parent_thread_id, role, status, title, objective, worktree_id,
-		        agent_guide_path, agent_override, tmux_session_name, tmux_window_name, tmux_pane_id,
-		        launch_command, created_at, started_at, completed_at, updated_at
+		`SELECT `+threadSelectColumns+`
 		   FROM threads
 		  WHERE id = ?`,
 		threadID,
@@ -469,6 +482,10 @@ func scanThread(scanner rowScanner) (Thread, error) {
 	var worktreeID sql.NullInt64
 	var agentGuidePath sql.NullString
 	var agentOverride sql.NullString
+	var taskSpecJSON sql.NullString
+	var scopeTaskIDsJSON sql.NullString
+	var scopeCaseIDsJSON sql.NullString
+	var scopeNodeIDsJSON sql.NullString
 	var tmuxSessionName sql.NullString
 	var tmuxWindowName sql.NullString
 	var tmuxPaneID sql.NullString
@@ -486,6 +503,10 @@ func scanThread(scanner rowScanner) (Thread, error) {
 		&worktreeID,
 		&agentGuidePath,
 		&agentOverride,
+		&taskSpecJSON,
+		&scopeTaskIDsJSON,
+		&scopeCaseIDsJSON,
+		&scopeNodeIDsJSON,
 		&tmuxSessionName,
 		&tmuxWindowName,
 		&tmuxPaneID,
@@ -516,6 +537,18 @@ func scanThread(scanner rowScanner) (Thread, error) {
 	}
 	if agentOverride.Valid {
 		thread.AgentOverride = &agentOverride.String
+	}
+	if taskSpecJSON.Valid {
+		thread.TaskSpecJSON = &taskSpecJSON.String
+	}
+	if scopeTaskIDsJSON.Valid {
+		thread.ScopeTaskIDsJSON = &scopeTaskIDsJSON.String
+	}
+	if scopeCaseIDsJSON.Valid {
+		thread.ScopeCaseIDsJSON = &scopeCaseIDsJSON.String
+	}
+	if scopeNodeIDsJSON.Valid {
+		thread.ScopeNodeIDsJSON = &scopeNodeIDsJSON.String
 	}
 	if tmuxSessionName.Valid {
 		thread.TmuxSessionName = &tmuxSessionName.String

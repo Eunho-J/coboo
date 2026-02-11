@@ -101,6 +101,18 @@ tmux 준비 + root thread 보장:
 {"id":"6","method":"thread.root.ensure","params":{"session_id":11,"ensure_tmux":true,"tmux_window_name":"root","initial_prompt":"You are the root orchestrator. Start by planning this request and delegating child threads.","launch_codex":true}}
 ```
 
+root handoff bootstrap(권장):
+
+```json
+{"id":"6","method":"orchestration.delegate","params":{"session_id":11,"user_request":"Implement requested feature set","task_spec":{"goal":"delegate from caller to root"},"scope_task_ids":[101],"scope_case_ids":[501],"max_concurrent_children":6}}
+```
+
+root thread 시작 ack:
+
+```json
+{"id":"6a","method":"thread.root.handoff_ack","params":{"session_id":11,"thread_id":1}}
+```
+
 응답의 `attach_info.attach_command` 또는 `child_attach_hint`를 사용자에게 안내해서 `tmux attach-session -t ...`로 진행상황/상호작용을 이어가게 합니다. 호출한 CLI는 root 세션 생성 후 즉시 반환할 수 있습니다.
 
 child thread 생성:

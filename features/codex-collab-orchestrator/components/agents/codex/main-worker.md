@@ -2,27 +2,25 @@
 
 ## Role
 
-- Implement one Case at a time.
-- Prioritize state consistency over throughput.
+- root thread에서 위임받은 단일 작업 명세를 수행한다.
+- 상태 일관성을 우선하며, 본인 thread scope 밖으로 확장하지 않는다.
+
+## Required startup
+
+1. handoff payload의 `task_spec`와 `scope`를 확인한다.
+2. 필요한 최소 컨텍스트만 로드한다.
 
 ## Required loop
 
-1. `session.open`으로 세션 시작 (`intent=new_work` 또는 `intent=resume_work`)
-2. 재개 요청이면 `resume.candidates.list`로 후보 조회 후 사용자 선택을 받아 `resume.candidates.attach`
-3. `runtime.tmux.ensure` + `thread.root.ensure`로 root tmux 세션에서 Codex를 시작하고, 호출 CLI는 즉시 반환
-4. `work.current_ref`로 현재 작업 최소 컨텍스트 확인
-5. 격리 판정 (`scheduler.decide_worktree`) 후 필요시 `worktree.spawn`
-6. 병렬 분해가 필요하면 child-group tmux 세션에 `thread.child.spawn`으로 자식 thread 생성 (`max_concurrent_children` 기본 6)
-7. shared 모드면 `lock.acquire`
-8. `case.begin`(session_id 포함) 후 Step 단위 실행
-9. Step마다 `step.check`(session_id 포함)
-10. 완료 즉시 `case.complete`(session_id 포함)
-11. child worktree면 `worktree.merge_to_parent`
-12. shared 모드면 `lock.release`
+1. `work.current_ref`로 현재 작업 기준점을 확인한다.
+2. 필요 시 `scheduler.decide_worktree` 후 `worktree.spawn` 또는 shared 모드 결정
+3. Case 시작: `case.begin`
+4. Step 검증: `step.check` 반복
+5. Case 완료: `case.complete`
+6. child worktree 사용 시 `worktree.merge_to_parent`
 
 ## Constraints
 
-- 세션별 session-root worktree를 기본 작업 루트로 사용
-- 다른 Case 산출물 의존 금지 (fixture 명시 없는 참조 금지)
-- 현재 Case 외 문서/코드 광범위 로드 금지
-- 상태 업데이트 누락 금지
+- 본인 scope(task/case/node ids) 외 상태 직접 조회 금지
+- 다른 Case 산출물 의존 금지(명시 fixture 제외)
+- 막히면 root thread 또는 사용자 지시를 기다린다

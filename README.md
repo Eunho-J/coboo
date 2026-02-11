@@ -60,6 +60,7 @@
 - `--sandbox danger-full-access`로 시작한 세션에서는 trusted projects 검증이 생략되어 로컬 MCP가 목록에 보이지 않을 수 있습니다.
 - 설치 후에는 대상 저장소를 trusted로 승인하고 세션을 재시작한 뒤 `codex mcp list`로 확인하세요.
 - 초기 기동 지연이 있는 환경은 `.codex/config.toml`의 해당 MCP 항목에 `startup_timeout_sec = 120`을 설정하세요.
+- 설치 동기화 검증은 `./scripts/verify-feature-sync.sh <feature-id> /path/to/target-repo`로 확인할 수 있습니다.
 - 설치 산출물은 `.gitignore`에 등록하세요. 권장 항목: `.agents/`, `.codex/`, `.codex-orch/`, `AGENTS.md` (`AGENTS.md`를 추적할 경우 제외).
 
 드라이런:

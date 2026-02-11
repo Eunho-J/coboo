@@ -6,13 +6,14 @@
 
 - `components/mcp/servers/codex-orchestrator/`: 상태/락/worktree/재개 오케스트레이션 MCP 서버
 - `components/skills/codex/codex-work-orchestrator/`: Codex 실행 워크플로우 강제 스킬
-- `components/agents/codex/*.md`: `main-worker`, `merge-reviewer`, `doc-mirror-manager`, `plan-architect` 템플릿
+- `components/agents/codex/*.md`: `root-orchestrator`, `main-worker`, `merge-reviewer`, `doc-mirror-manager`, `plan-architect` 템플릿
 - `components/mcp/docs/codex-orchestrator-plan.md`: 설계 문서
 
 추가 고도화:
 
 - `runtime.tmux.ensure`로 tmux 자동 준비(실패 시 수동 설치 fallback 안내)
 - `thread.root.ensure` / `thread.child.*`로 nested agent thread + tmux pane 관리
+- `orchestration.delegate` + `thread.root.handoff_ack`로 caller CLI bootstrap 후 root 주도 오케스트레이션 강제
 - `merge.review.request_auto`로 merge reviewer thread 자동 디스패치
 
 ## 설치 (선택 기능 설치)
@@ -34,6 +35,12 @@
 ./scripts/install-feature.sh codex-collab-orchestrator /path/to/target-repo --dry-run
 ```
 
+설치 동기화 검증:
+
+```bash
+./scripts/verify-feature-sync.sh codex-collab-orchestrator /path/to/target-repo
+```
+
 ## 설치 후 주요 경로
 
 설치 대상 저장소 기준(Codex 공식 경로 반영):
@@ -43,6 +50,7 @@
 - `.codex/agents/codex-collab-orchestrator/`
 - `.codex/mcp/features/codex-collab-orchestrator/`
 - `.codex/config.toml` (MCP 서버 설정 블록 추가)
+- `.codex/features/codex-collab-orchestrator/install-manifest.json`
 
 권장: 초기 기동 타임아웃 방지를 위해 `.codex/config.toml`의 해당 MCP 엔트리에 `startup_timeout_sec = 120` 설정
 

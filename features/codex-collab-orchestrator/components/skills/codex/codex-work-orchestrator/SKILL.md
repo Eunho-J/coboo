@@ -27,10 +27,12 @@ Use this skill to enforce a strict execution loop for multi-session Codex work:
   - call `resume.candidates.attach`
 - Ensure runtime prerequisites:
   - call `runtime.tmux.ensure`
-  - call `thread.root.ensure` with `initial_prompt`/`launch_codex=true` so a new root Codex CLI starts inside tmux
+  - prefer `orchestration.delegate` to bootstrap root Codex CLI with structured handoff payload (`task_spec` + `scope_*`)
+  - fallback: call `thread.root.ensure` with `initial_prompt`/`launch_codex=true`
 - After `thread.root.ensure`, return control to the caller CLI immediately.
   - Do not execute orchestration logic in the caller CLI.
   - Tell the user to continue interaction via `tmux attach-session -t <root-session>`.
+  - root thread should call `thread.root.handoff_ack` before starting orchestration.
 
 ### 2) Register work items before implementation
 - Create tasks with `task.create` using strict levels.
@@ -102,8 +104,10 @@ workspace.init
 session.open
   -> resume.candidates.list/attach (if intent=resume_work)
 runtime.tmux.ensure
-thread.root.ensure (launch root codex in tmux + return)
+orchestration.delegate (preferred: launch root codex with handoff payload + return)
+  -> or thread.root.ensure (fallback)
   -> user attaches to root tmux session
+thread.root.handoff_ack (from root thread)
 task.create (epic/feature/test_group/case)
 scheduler.decide_worktree
   -> worktree.spawn (if split needed)

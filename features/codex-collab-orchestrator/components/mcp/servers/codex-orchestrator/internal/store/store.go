@@ -127,7 +127,11 @@ func (store *Store) migrate(ctx context.Context) error {
 			owner TEXT NOT NULL,
 			started_at TEXT NOT NULL,
 			last_seen_at TEXT NOT NULL,
-			status TEXT NOT NULL
+			status TEXT NOT NULL,
+			delegation_state TEXT NULL,
+			delegation_root_thread_id INTEGER NULL,
+			delegation_issued_at TEXT NULL,
+			delegation_acked_at TEXT NULL
 		);`,
 		`ALTER TABLE sessions ADD COLUMN repo_path TEXT NULL;`,
 		`ALTER TABLE sessions ADD COLUMN terminal_fingerprint TEXT NULL;`,
@@ -137,6 +141,10 @@ func (store *Store) migrate(ctx context.Context) error {
 		`ALTER TABLE sessions ADD COLUMN root_thread_id INTEGER NULL;`,
 		`ALTER TABLE sessions ADD COLUMN tmux_session_name TEXT NULL;`,
 		`ALTER TABLE sessions ADD COLUMN runtime_state TEXT NULL;`,
+		`ALTER TABLE sessions ADD COLUMN delegation_state TEXT NULL;`,
+		`ALTER TABLE sessions ADD COLUMN delegation_root_thread_id INTEGER NULL;`,
+		`ALTER TABLE sessions ADD COLUMN delegation_issued_at TEXT NULL;`,
+		`ALTER TABLE sessions ADD COLUMN delegation_acked_at TEXT NULL;`,
 		`CREATE TABLE IF NOT EXISTS current_refs (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			session_id INTEGER NOT NULL,
@@ -247,6 +255,10 @@ func (store *Store) migrate(ctx context.Context) error {
 			worktree_id INTEGER NULL,
 			agent_guide_path TEXT NULL,
 			agent_override TEXT NULL,
+			task_spec_json TEXT NULL,
+			scope_task_ids_json TEXT NULL,
+			scope_case_ids_json TEXT NULL,
+			scope_node_ids_json TEXT NULL,
 			tmux_session_name TEXT NULL,
 			tmux_window_name TEXT NULL,
 			tmux_pane_id TEXT NULL,
@@ -256,6 +268,10 @@ func (store *Store) migrate(ctx context.Context) error {
 			completed_at TEXT NULL,
 			updated_at TEXT NOT NULL
 		);`,
+		`ALTER TABLE threads ADD COLUMN task_spec_json TEXT NULL;`,
+		`ALTER TABLE threads ADD COLUMN scope_task_ids_json TEXT NULL;`,
+		`ALTER TABLE threads ADD COLUMN scope_case_ids_json TEXT NULL;`,
+		`ALTER TABLE threads ADD COLUMN scope_node_ids_json TEXT NULL;`,
 		`CREATE INDEX IF NOT EXISTS idx_threads_session_parent ON threads(session_id, parent_thread_id, id DESC);`,
 		`CREATE INDEX IF NOT EXISTS idx_threads_status ON threads(status);`,
 		`CREATE TABLE IF NOT EXISTS review_jobs (

@@ -78,6 +78,31 @@ copy_directory() {
   cp -R "${source_dir}" "${destination_dir}"
 }
 
+directory_hash() {
+  local dir_path="$1"
+  if [[ ! -d "${dir_path}" ]]; then
+    echo ""
+    return
+  fi
+  local file_list
+  file_list="$(find "${dir_path}" -type f \
+    -not -path '*/.cache/*' \
+    -not -path '*/.toolchains/*' \
+    -print | LC_ALL=C sort || true)"
+  if [[ -z "${file_list}" ]]; then
+    echo ""
+    return
+  fi
+  local checksum_input=""
+  while IFS= read -r file_path; do
+    [[ -n "${file_path}" ]] || continue
+    local digest
+    digest="$(shasum -a 256 "${file_path}" | awk '{print $1}')"
+    checksum_input+="${digest}  ${file_path#$dir_path/}"$'\n'
+  done <<< "${file_list}"
+  printf "%s" "${checksum_input}" | shasum -a 256 | awk '{print $1}'
+}
+
 install_skills() {
   local source_root="${COMPONENTS_DIR}/skills"
   if [[ ! -d "${source_root}" ]]; then
@@ -215,6 +240,56 @@ EOF
   write_managed_block "${AGENTS_MD_PATH}" "codex-feature:${FEATURE_NAME}:agents" "${block_body}"
 }
 
+write_install_manifest() {
+  local manifest_dir="${CODEX_DIR}/features/${FEATURE_NAME}"
+  local manifest_path="${manifest_dir}/install-manifest.json"
+  local source_revision="unknown"
+  local source_agents="${COMPONENTS_DIR}/agents"
+  local source_mcp="${COMPONENTS_DIR}/mcp"
+  local source_skills="${COMPONENTS_DIR}/skills"
+  local target_agents="${AGENT_BUNDLE_DIR}"
+  local target_mcp="${MCP_FEATURE_DIR}"
+  local target_skills="${SKILLS_TARGET_DIR}"
+
+  if git -C "${REPO_ROOT}" rev-parse HEAD >/dev/null 2>&1; then
+    source_revision="$(git -C "${REPO_ROOT}" rev-parse HEAD)"
+  fi
+
+  if [[ "${DRY_RUN}" == "--dry-run" ]]; then
+    echo "[dry-run] write install manifest -> ${manifest_path}"
+    return
+  fi
+
+  mkdir -p "${manifest_dir}"
+  cat > "${manifest_path}" <<EOF
+{
+  "feature_id": "${FEATURE_ID}",
+  "feature_name": "${FEATURE_NAME}",
+  "installed_at": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
+  "source_repo_root": "${REPO_ROOT}",
+  "source_revision": "${source_revision}",
+  "target_repo_root": "${TARGET_DIR}",
+  "paths": {
+    "source_agents": "${source_agents}",
+    "source_mcp": "${source_mcp}",
+    "source_skills": "${source_skills}",
+    "target_agents": "${target_agents}",
+    "target_mcp": "${target_mcp}",
+    "target_skills": "${target_skills}"
+  },
+  "hashes": {
+    "source_agents": "$(directory_hash "${source_agents}")",
+    "source_mcp": "$(directory_hash "${source_mcp}")",
+    "source_skills": "$(directory_hash "${source_skills}")",
+    "target_agents": "$(directory_hash "${target_agents}")",
+    "target_mcp": "$(directory_hash "${target_mcp}")",
+    "target_skills": "$(directory_hash "${target_skills}")"
+  }
+}
+EOF
+  echo "wrote install manifest -> ${manifest_path}"
+}
+
 echo "feature: ${FEATURE_ID}"
 echo "source:  ${FEATURE_DIR}"
 echo "target:  ${TARGET_DIR}"
@@ -226,6 +301,7 @@ copy_directory "${COMPONENTS_DIR}/mcp" "${MCP_FEATURE_DIR}" "mcp assets"
 install_skills
 configure_mcp_servers
 configure_agents_file
+write_install_manifest
 
 echo "done"
 echo "next:"

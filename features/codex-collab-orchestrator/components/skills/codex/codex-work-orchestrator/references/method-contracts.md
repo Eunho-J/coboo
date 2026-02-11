@@ -35,6 +35,16 @@
     - tmux 존재 시 `status=ready`
     - tmux 미존재 시 자동 설치 시도 후 실패하면 `status=manual_required` + 수동 설치 안내
   - output: runtime prerequisite 상태 + 설치 시도 로그
+- `runtime.bundle.info`
+  - input: none
+  - output: 현재 repo 기준 설치된 bundle/agents/skills/mcp 경로와 sync 점검 명령
+- `orchestration.delegate`
+  - input: `session_id`, optional `title`, optional `objective`, optional `user_request`, optional `agent_guide_path`, optional `task_spec`, optional `scope_task_ids`, optional `scope_case_ids`, optional `scope_node_ids`, optional `child_session_name`, optional `max_concurrent_children`
+  - behavior:
+    - caller CLI는 root tmux Codex를 bootstrap만 수행
+    - delegation 상태를 세션에 기록(`delegation_state`, issued/acked timestamp)
+    - root thread launch 후 caller는 즉시 idle 복귀
+  - output: `session`, `root_thread`, `attach_info`, `child_attach_hint`, `caller_action=return_to_idle`
 
 ## Task management
 
@@ -102,15 +112,21 @@
   - input: `session_id`, `worktree_id`
   - output: merged child and parent worktree context
 - `thread.root.ensure`
-  - input: `session_id`, optional `role`, optional `title`, optional `objective`, optional `ensure_tmux`, optional `auto_install`, optional `tmux_session_name`, optional `tmux_window_name`, optional `initial_prompt`, optional `launch_command`, optional `codex_command`, optional `launch_codex`(default=true), optional `force_launch`, optional `child_session_name`
+  - input: `session_id`, optional `role`, optional `title`, optional `objective`, optional `ensure_tmux`, optional `auto_install`, optional `tmux_session_name`, optional `tmux_window_name`, optional `initial_prompt`, optional `launch_command`, optional `codex_command`, optional `launch_codex`(default=true), optional `force_launch`, optional `child_session_name`, optional `max_concurrent_children`, optional `task_spec`, optional `scope_task_ids`, optional `scope_case_ids`, optional `scope_node_ids`
   - behavior:
     - session-root thread 보장
     - root 전용 tmux session 생성/정규화(단일 window/pane)
     - 기본적으로 root pane에서 `codex`를 초기 프롬프트와 함께 자동 실행
     - 호출자는 세션 attach 안내만 반환받고 즉시 제어권 복귀 가능
   - output: `session`, `root_thread`, `tmux`, `attach_info`, `child_tmux_session`, `child_attach_hint`
+- `thread.root.handoff_ack`
+  - input: `session_id`, `thread_id`, optional `state`
+  - behavior:
+    - root thread가 handoff 수신/시작을 명시적으로 기록
+    - session delegation ack timestamp 갱신
+  - output: updated `session`, `root_thread`, `attach_info`
 - `thread.child.spawn`
-  - input: `session_id`, optional `parent_thread_id`, optional `worktree_id`, optional `role`, optional `title`, optional `objective`, optional `agent_guide_path`, optional `agent_override`, optional `launch_command`, optional `split_direction(vertical|horizontal)`, optional `ensure_tmux`, optional `auto_install`, optional `tmux_session_name`, optional `tmux_window_name`, optional `initial_prompt`, optional `codex_command`, optional `launch_codex`(default=true), optional `max_concurrent_children`(default=6)
+  - input: `session_id`, optional `parent_thread_id`, optional `worktree_id`, optional `role`, optional `title`, optional `objective`, optional `agent_guide_path`, optional `agent_override`, optional `launch_command`, optional `split_direction(vertical|horizontal)`, optional `ensure_tmux`, optional `auto_install`, optional `tmux_session_name`, optional `tmux_window_name`, optional `initial_prompt`, optional `codex_command`, optional `launch_codex`(default=true), optional `max_concurrent_children`(default=6), optional `task_spec`, optional `scope_task_ids`, optional `scope_case_ids`, optional `scope_node_ids`
   - behavior:
     - root thread/tmux 상태 확보 후 child 전용 tmux session에서 child thread 생성
     - child session pane 분할 + `codex` 실행 커맨드 전송

@@ -30,6 +30,7 @@ AGENTS.md
 ```bash
 cd /path/to/target-repo
 codex mcp list
+./scripts/verify-feature-sync.sh codex-collab-orchestrator /path/to/target-repo
 ```
 
 첫 실행에서 Go toolchain 다운로드/컴파일로 초기 기동이 느릴 수 있으므로, 로컬 MCP에 아래 설정을 권장합니다.
