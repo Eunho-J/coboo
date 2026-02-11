@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Work Orchestrator"
+  short_description: "Run parallel Codex work with lock and checkpoint controls"
+  default_prompt: "Orchestrate parallel Codex sessions with strict case-level checkpoints and lock discipline."

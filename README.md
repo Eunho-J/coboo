@@ -1,47 +1,65 @@
 # LLM Ops Workspace
 
-Codex, Claude, Gemini를 더 효율적으로 쓰기 위한 **Skill / Agent / MCP 자산**을 한 곳에 모아 관리하는 레포지토리입니다.
+이 레포는 **기능 번들(feature bundle)** 단위로 Skill/Agent/MCP를 묶어 관리합니다.
 
-## 목적
+핵심 원칙:
 
-- 반복 작업을 재사용 가능한 스킬/에이전트로 축적
-- 모델별(Codex/Claude/Gemini) 설정 차이를 명확히 분리
-- MCP 서버/설정/문서를 공통 기준으로 관리
+- 기능은 `mcp + skill + agent`가 유기적으로 동작하는 최소 단위
+- 기능은 서로 독립적으로 추가/설치 가능
+- 사용자는 필요한 기능만 선택 설치
 
 ## 디렉터리 구조
 
 ```text
 .
 ├── README.md
-├── agents/
-│   ├── claude/
-│   ├── codex/
-│   └── gemini/
-├── mcp/
-│   ├── configs/
-│   ├── docs/
-│   └── servers/
-└── skills/
-    ├── claude/
-    ├── codex/
-    └── gemini/
+├── features/
+│   ├── README.md
+│   └── <feature-id>/
+│       ├── README.md
+│       ├── feature.yaml
+│       ├── install/
+│       └── components/
+│           ├── agents/
+│           ├── skills/
+│           └── mcp/
+└── scripts/
+    ├── list-features.sh
+    └── install-feature.sh
 ```
 
-## 작업 규칙 (간단)
+## 기능 카탈로그
 
-1. **새 항목은 목적별로 분리**
-   - Skill은 `skills/<provider>/...`
-   - Agent 프롬프트/설정은 `agents/<provider>/...`
-   - MCP 관련 자산은 `mcp/{servers|configs|docs}/...`
-2. **작은 단위로 커밋**
-   - 하나의 커밋은 하나의 변경 의도만 담기
-3. **문서 우선**
-   - 새 자산 추가 시 사용 방법을 함께 기록
+- `codex-collab-orchestrator`: 다중 Codex 세션 충돌 방지 + 상태 복구 + worktree/lock 오케스트레이션  
+  - 상세: `features/codex-collab-orchestrator/README.md`
 
-## 시작 가이드
+## 기능 선택 설치
 
-- 새 스킬 추가: `skills/<provider>/<skill-name>/`
-- 새 에이전트 추가: `agents/<provider>/<agent-name>/`
-- MCP 서버 추가: `mcp/servers/<server-name>/`
+설치 가능한 기능 목록:
 
-필요해지면 이후에 템플릿, 예시, 검증 스크립트를 단계적으로 확장합니다.
+```bash
+./scripts/list-features.sh
+```
+
+특정 기능만 설치:
+
+```bash
+./scripts/install-feature.sh <feature-id> /path/to/target-workspace
+```
+
+예시:
+
+```bash
+./scripts/install-feature.sh codex-collab-orchestrator /path/to/target-workspace
+```
+
+드라이런:
+
+```bash
+./scripts/install-feature.sh codex-collab-orchestrator /path/to/target-workspace --dry-run
+```
+
+## LLM 사용 예시
+
+- `features 목록 확인하고 codex-collab-orchestrator만 ~/my-workspace에 설치해줘.`
+- `codex-collab-orchestrator의 MCP 서버 테스트를 실행해줘.`

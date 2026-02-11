@@ -1,0 +1,12 @@
+id: codex-collab-orchestrator
+name: Codex Collaborator Orchestrator
+version: 0.1.0
+summary: Multi-session Codex work coordination with task state, locks, worktree strategy, and compact-safe resume.
+components:
+  - components/agents/codex/main-worker.md
+  - components/agents/codex/merge-reviewer.md
+  - components/agents/codex/doc-mirror-manager.md
+  - components/agents/codex/plan-architect.md
+  - components/skills/codex/codex-work-orchestrator
+  - components/mcp/docs/codex-orchestrator-plan.md
+  - components/mcp/servers/codex-orchestrator
