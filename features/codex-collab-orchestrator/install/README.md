@@ -6,6 +6,11 @@
 ./scripts/install-feature.sh codex-collab-orchestrator /path/to/target-repo
 ```
 
+중요: 로컬 MCP 서버를 프로젝트 단위로 사용할 때는 **해당 대상 저장소를 Codex의 trusted projects에 먼저 등록**해야 합니다.
+
+- `--sandbox danger-full-access`로 세션을 시작하면 trusted projects 검증 프롬프트가 생략되어, 로컬 MCP가 목록에 안 뜨는 상황이 발생할 수 있습니다.
+- 설치 후 Codex에서 대상 저장소(`/path/to/target-repo`)를 trusted로 승인한 다음 세션을 재시작하세요.
+
 설치 후 Codex 세션을 재시작하면 새 Skill/MCP/AGENTS 지시사항이 반영됩니다.
 
 설치 검증:

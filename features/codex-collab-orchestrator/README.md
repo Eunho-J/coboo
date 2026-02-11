@@ -23,6 +23,11 @@
 ./scripts/install-feature.sh codex-collab-orchestrator /path/to/target-repo
 ```
 
+주의: 로컬 MCP가 정상 인식되려면 대상 저장소를 Codex trusted projects에 등록해야 합니다.
+
+- `--sandbox danger-full-access`로 실행하면 trusted projects 검증이 생략되어 로컬 MCP 서버가 표시되지 않을 수 있습니다.
+- 설치 직후에는 대상 저장소를 trusted로 승인하고 Codex 세션을 재시작하세요.
+
 드라이런:
 
 ```bash
