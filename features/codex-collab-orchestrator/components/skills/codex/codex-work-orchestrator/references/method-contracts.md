@@ -102,16 +102,19 @@
   - input: `session_id`, `worktree_id`
   - output: merged child and parent worktree context
 - `thread.root.ensure`
-  - input: `session_id`, optional `role`, optional `title`, optional `objective`, optional `ensure_tmux`, optional `auto_install`
+  - input: `session_id`, optional `role`, optional `title`, optional `objective`, optional `ensure_tmux`, optional `auto_install`, optional `tmux_session_name`, optional `tmux_window_name`, optional `initial_prompt`, optional `launch_command`, optional `codex_command`, optional `launch_codex`(default=true), optional `force_launch`, optional `child_session_name`
   - behavior:
     - session-root thread 보장
-    - root thread id 기반 tmux session 생성/연결 시도
-  - output: `session`, `root_thread`, `tmux`, `attach_info`
+    - root 전용 tmux session 생성/정규화(단일 window/pane)
+    - 기본적으로 root pane에서 `codex`를 초기 프롬프트와 함께 자동 실행
+    - 호출자는 세션 attach 안내만 반환받고 즉시 제어권 복귀 가능
+  - output: `session`, `root_thread`, `tmux`, `attach_info`, `child_tmux_session`, `child_attach_hint`
 - `thread.child.spawn`
-  - input: `session_id`, optional `parent_thread_id`, optional `worktree_id`, optional `role`, optional `title`, optional `objective`, optional `agent_guide_path`, optional `agent_override`, optional `launch_command`, optional `split_direction(vertical|horizontal)`, optional `ensure_tmux`, optional `auto_install`
+  - input: `session_id`, optional `parent_thread_id`, optional `worktree_id`, optional `role`, optional `title`, optional `objective`, optional `agent_guide_path`, optional `agent_override`, optional `launch_command`, optional `split_direction(vertical|horizontal)`, optional `ensure_tmux`, optional `auto_install`, optional `tmux_session_name`, optional `tmux_window_name`, optional `initial_prompt`, optional `codex_command`, optional `launch_codex`(default=true), optional `max_concurrent_children`(default=6)
   - behavior:
-    - root thread/tmux 상태 확보 후 child thread 생성
-    - tmux pane 분할 + Codex 실행 커맨드 전송
+    - root thread/tmux 상태 확보 후 child 전용 tmux session에서 child thread 생성
+    - child session pane 분할 + `codex` 실행 커맨드 전송
+    - `max_concurrent_children` 초과 시 종료된 child pane를 정리해 새 pane 할당 시도
   - output: `thread`, `tmux`, `attach_info`
 - `thread.child.list`
   - input: `session_id`, optional `parent_thread_id`, optional `status`, optional `role`

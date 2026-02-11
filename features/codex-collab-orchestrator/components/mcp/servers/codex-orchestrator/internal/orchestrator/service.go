@@ -932,6 +932,14 @@ type threadRootEnsureInput struct {
 	EnsureTmux     *bool  `json:"ensure_tmux"`
 	AutoInstall    *bool  `json:"auto_install"`
 	AgentGuidePath string `json:"agent_guide_path"`
+	TmuxSessionName string `json:"tmux_session_name"`
+	TmuxWindowName  string `json:"tmux_window_name"`
+	InitialPrompt   string `json:"initial_prompt"`
+	LaunchCommand   string `json:"launch_command"`
+	CodexCommand    string `json:"codex_command"`
+	LaunchCodex     *bool  `json:"launch_codex"`
+	ForceLaunch     *bool  `json:"force_launch"`
+	ChildSessionName string `json:"child_session_name"`
 }
 
 type threadChildSpawnInput struct {
@@ -947,6 +955,12 @@ type threadChildSpawnInput struct {
 	SplitDirection string          `json:"split_direction"`
 	EnsureTmux     *bool           `json:"ensure_tmux"`
 	AutoInstall    *bool           `json:"auto_install"`
+	TmuxSessionName      string `json:"tmux_session_name"`
+	TmuxWindowName       string `json:"tmux_window_name"`
+	InitialPrompt        string `json:"initial_prompt"`
+	CodexCommand         string `json:"codex_command"`
+	LaunchCodex          *bool  `json:"launch_codex"`
+	MaxConcurrentChildren *int  `json:"max_concurrent_children"`
 }
 
 type threadChildListInput struct {

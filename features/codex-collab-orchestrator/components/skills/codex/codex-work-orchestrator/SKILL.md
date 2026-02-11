@@ -8,7 +8,7 @@ description: Coordinate parallel Codex sessions in a single repository with conf
 Use this skill to enforce a strict execution loop for multi-session Codex work:
 
 1. Split work into `Epic → Feature → TestGroup → Case → Step`.
-2. Start every terminal session with a session-root worktree.
+2. Start orchestration in a new tmux `root` session, not in the caller CLI.
 3. Execute one Case at a time and checkpoint after every Step.
 4. Never depend on another Case output unless it is declared as fixture.
 5. Resume from orchestrator state instead of re-reading broad docs.
@@ -27,7 +27,10 @@ Use this skill to enforce a strict execution loop for multi-session Codex work:
   - call `resume.candidates.attach`
 - Ensure runtime prerequisites:
   - call `runtime.tmux.ensure`
-  - call `thread.root.ensure` to bind session-root thread/tmux context
+  - call `thread.root.ensure` with `initial_prompt`/`launch_codex=true` so a new root Codex CLI starts inside tmux
+- After `thread.root.ensure`, return control to the caller CLI immediately.
+  - Do not execute orchestration logic in the caller CLI.
+  - Tell the user to continue interaction via `tmux attach-session -t <root-session>`.
 
 ### 2) Register work items before implementation
 - Create tasks with `task.create` using strict levels.
@@ -70,11 +73,12 @@ Use this skill to enforce a strict execution loop for multi-session Codex work:
 - Read only related feature/case context, not full project docs.
 
 ### 8) Nested thread management
-- Spawn nested worker/reviewer thread: `thread.child.spawn`
+- Spawn nested worker/reviewer thread in child-group session: `thread.child.spawn`
 - List active child threads: `thread.child.list`
 - Interrupt one child thread safely: `thread.child.interrupt`
 - Stop/terminate child thread: `thread.child.stop`
 - Retrieve attach commands: `thread.attach_info`
+- Use `max_concurrent_children` (default 6) to cap child panes per root session.
 
 ### 7) Refresh Markdown mirror only on demand
 - Use `mirror.status` for outdated detection.
@@ -85,6 +89,7 @@ Use this skill to enforce a strict execution loop for multi-session Codex work:
 
 - Process exactly one active Case at a time per worker session.
 - Use one session-root worktree per terminal session.
+- The caller CLI only bootstraps root thread creation, then returns to idle.
 - Do not run a Case that requires outputs from another unfinished Case.
 - Do not read unrelated docs during Case execution.
 - Update state immediately after each meaningful action.
@@ -96,6 +101,9 @@ Use this skill to enforce a strict execution loop for multi-session Codex work:
 workspace.init
 session.open
   -> resume.candidates.list/attach (if intent=resume_work)
+runtime.tmux.ensure
+thread.root.ensure (launch root codex in tmux + return)
+  -> user attaches to root tmux session
 task.create (epic/feature/test_group/case)
 scheduler.decide_worktree
   -> worktree.spawn (if split needed)

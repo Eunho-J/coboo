@@ -98,13 +98,15 @@ tmux 준비 + root thread 보장:
 
 ```json
 {"id":"5","method":"runtime.tmux.ensure","params":{"session_id":11,"auto_install":true}}
-{"id":"6","method":"thread.root.ensure","params":{"session_id":11,"ensure_tmux":true}}
+{"id":"6","method":"thread.root.ensure","params":{"session_id":11,"ensure_tmux":true,"tmux_window_name":"root","initial_prompt":"You are the root orchestrator. Start by planning this request and delegating child threads.","launch_codex":true}}
 ```
+
+응답의 `attach_info.attach_command` 또는 `child_attach_hint`를 사용자에게 안내해서 `tmux attach-session -t ...`로 진행상황/상호작용을 이어가게 합니다. 호출한 CLI는 root 세션 생성 후 즉시 반환할 수 있습니다.
 
 child thread 생성:
 
 ```json
-{"id":"7","method":"thread.child.spawn","params":{"session_id":11,"role":"main-worker","title":"api/users case","split_direction":"vertical"}}
+{"id":"7","method":"thread.child.spawn","params":{"session_id":11,"role":"main-worker","title":"api/users case","split_direction":"vertical","tmux_window_name":"children","max_concurrent_children":6,"launch_codex":true}}
 ```
 
 merge reviewer 자동 스레드 생성:

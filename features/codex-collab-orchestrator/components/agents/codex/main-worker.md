@@ -9,10 +9,10 @@
 
 1. `session.open`으로 세션 시작 (`intent=new_work` 또는 `intent=resume_work`)
 2. 재개 요청이면 `resume.candidates.list`로 후보 조회 후 사용자 선택을 받아 `resume.candidates.attach`
-3. `runtime.tmux.ensure` + `thread.root.ensure`로 세션 런타임 준비
+3. `runtime.tmux.ensure` + `thread.root.ensure`로 root tmux 세션에서 Codex를 시작하고, 호출 CLI는 즉시 반환
 4. `work.current_ref`로 현재 작업 최소 컨텍스트 확인
 5. 격리 판정 (`scheduler.decide_worktree`) 후 필요시 `worktree.spawn`
-6. 병렬 분해가 필요하면 `thread.child.spawn`으로 자식 thread 생성
+6. 병렬 분해가 필요하면 child-group tmux 세션에 `thread.child.spawn`으로 자식 thread 생성 (`max_concurrent_children` 기본 6)
 7. shared 모드면 `lock.acquire`
 8. `case.begin`(session_id 포함) 후 Step 단위 실행
 9. Step마다 `step.check`(session_id 포함)
