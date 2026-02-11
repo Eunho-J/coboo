@@ -2,3 +2,8 @@
 command = "npx"
 args = ["-y", "@playwright/mcp@latest", "--headless"]
 startup_timeout_sec = 180
+
+[mcp_servers.playwright.env]
+npm_config_cache = "__TARGET_DIR__/.codex/mcp/features/__FEATURE_NAME__/.cache/npm"
+npm_config_loglevel = "error"
+NPM_CONFIG_UPDATE_NOTIFIER = "false"

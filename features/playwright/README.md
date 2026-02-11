@@ -13,6 +13,16 @@ MCP는 npm 기반 서버를 사용합니다.
 npx -y @playwright/mcp@latest --headless
 ```
 
+공식 기본 예시는 아래와 같습니다.
+
+```toml
+[mcp_servers.playwright]
+command = "npx"
+args = ["@playwright/mcp@latest"]
+```
+
+이 번들은 캐시 손상으로 인한 초기 handshake 실패를 줄이기 위해 전용 npm 캐시 경로를 함께 설정합니다.
+
 ## 설치
 
 ```bash

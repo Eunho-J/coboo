@@ -25,6 +25,8 @@ codex mcp list
 - Node.js + npm
 - `npx -y @playwright/mcp@latest --headless` 실행 가능 환경
 
+참고: 번들은 MCP 환경변수에 전용 npm 캐시를 설정해(`npm_config_cache`) npx 캐시 손상으로 인한 startup 실패 가능성을 낮춥니다.
+
 권장 `.gitignore`:
 
 ```gitignore
