@@ -14,25 +14,31 @@
 레포 루트에서 기능 단위 설치 스크립트를 사용합니다.
 
 ```bash
-./scripts/install-feature.sh codex-collab-orchestrator /path/to/target-workspace
+./scripts/install-feature.sh codex-collab-orchestrator /path/to/target-repo
 ```
 
 드라이런:
 
 ```bash
-./scripts/install-feature.sh codex-collab-orchestrator /path/to/target-workspace --dry-run
+./scripts/install-feature.sh codex-collab-orchestrator /path/to/target-repo --dry-run
 ```
 
 ## 설치 후 주요 경로
 
-설치 대상 워크스페이스 기준:
+설치 대상 저장소 기준(Codex 공식 경로 반영):
 
-- `agents/codex/main-worker.md`
-- `agents/codex/merge-reviewer.md`
-- `agents/codex/doc-mirror-manager.md`
-- `skills/codex/codex-work-orchestrator/`
-- `mcp/docs/codex-orchestrator-plan.md`
-- `mcp/servers/codex-orchestrator/`
+- `AGENTS.md` (managed block 추가)
+- `.agents/skills/codex-work-orchestrator/`
+- `.codex/agents/codex-collab-orchestrator/`
+- `.codex/mcp/features/codex-collab-orchestrator/`
+- `.codex/config.toml` (MCP 서버 설정 블록 추가)
+
+## 공식 문서 기준
+
+- Skills: https://developers.openai.com/codex/skills/
+- MCP: https://developers.openai.com/codex/mcp/
+- Config: https://developers.openai.com/codex/config/
+- AGENTS.md: https://developers.openai.com/codex/agents/
 
 ## 서버 개발/검증
 

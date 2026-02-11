@@ -44,20 +44,34 @@
 특정 기능만 설치:
 
 ```bash
-./scripts/install-feature.sh <feature-id> /path/to/target-workspace
+./scripts/install-feature.sh <feature-id> /path/to/target-repo
 ```
 
 예시:
 
 ```bash
-./scripts/install-feature.sh codex-collab-orchestrator /path/to/target-workspace
+./scripts/install-feature.sh codex-collab-orchestrator /path/to/target-repo
 ```
 
 드라이런:
 
 ```bash
-./scripts/install-feature.sh codex-collab-orchestrator /path/to/target-workspace --dry-run
+./scripts/install-feature.sh codex-collab-orchestrator /path/to/target-repo --dry-run
 ```
+
+설치 스크립트는 Codex 공식 런타임 경로에 맞춰 배치합니다.
+
+- Skill: `<target-repo>/.agents/skills/<skill-name>/SKILL.md`
+- MCP: `<target-repo>/.codex/mcp/features/<feature-id>/...`
+- MCP config: `<target-repo>/.codex/config.toml` (`[mcp_servers.*]` 관리 블록)
+- Agent guide: `<target-repo>/AGENTS.md` + `<target-repo>/.codex/agents/<feature-id>/...`
+
+공식 문서:
+
+- Skills: https://developers.openai.com/codex/skills/
+- MCP: https://developers.openai.com/codex/mcp/
+- Config: https://developers.openai.com/codex/config/
+- AGENTS.md: https://developers.openai.com/codex/agents/
 
 ## LLM 사용 예시
 
