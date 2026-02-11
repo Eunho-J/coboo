@@ -224,4 +224,5 @@ configure_agents_file
 echo "done"
 echo "next:"
 echo "- restart Codex session so new AGENTS/skills/MCP config are loaded."
+echo "- add install/runtime artifacts to .gitignore (.agents/, .codex/, .codex-orch/, AGENTS.md as needed)."
 echo "- optional verify: codex mcp list (from target repo)"

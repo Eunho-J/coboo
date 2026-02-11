@@ -46,6 +46,18 @@
 
 권장: 초기 기동 타임아웃 방지를 위해 `.codex/config.toml`의 해당 MCP 엔트리에 `startup_timeout_sec = 120` 설정
 
+권장: 설치/실행 산출물은 `.gitignore`에 등록
+
+```gitignore
+# codex-collab-orchestrator install/runtime artifacts
+.agents/
+.codex/
+.codex-orch/
+AGENTS.md
+```
+
+`AGENTS.md`를 저장소 정책상 추적해야 하면 해당 줄은 제외
+
 ## 공식 문서 기준
 
 - Skills: https://developers.openai.com/codex/skills/

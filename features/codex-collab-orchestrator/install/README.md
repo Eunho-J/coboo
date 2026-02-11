@@ -13,6 +13,18 @@
 
 설치 후 Codex 세션을 재시작하면 새 Skill/MCP/AGENTS 지시사항이 반영됩니다.
 
+설치 산출물이 저장소에 섞이지 않도록 `.gitignore` 등록을 권장합니다.
+
+```gitignore
+# codex-collab-orchestrator install/runtime artifacts
+.agents/
+.codex/
+.codex-orch/
+AGENTS.md
+```
+
+`AGENTS.md`를 저장소에서 직접 관리할 계획이면 해당 항목은 제외하세요.
+
 설치 검증:
 
 ```bash
