@@ -30,8 +30,9 @@
 
 ## 기능 카탈로그
 
-- `codex-collab-orchestrator`: 다중 Codex 세션 충돌 방지 + 상태 복구 + worktree/lock 오케스트레이션  
+- `codex-collab-orchestrator`: 다중 Codex 세션 충돌 방지 + 상태 복구 + worktree/lock 오케스트레이션
   - 상세: `features/codex-collab-orchestrator/README.md`
+  - 사용법: `features/codex-collab-orchestrator/bundle-description.md`
 - `playwright`: Playwright 브라우저 자동화 스킬 + npm 기반 MCP 서버 설정
   - 상세: `features/playwright/README.md`
 

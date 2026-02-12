@@ -2,6 +2,10 @@
 
 `codex-collab-orchestrator`는 한 레포에서 여러 Codex 세션이 동시에 작업할 때 충돌을 줄이고, context compact 이후에도 작업을 이어갈 수 있도록 설계된 기능 번들입니다.
 
+## 상세 사용법
+
+MCP 메서드 전체 목록, Provider 시스템, tmux Client, v2 신규 기능, Dispatch 패턴, 리소스 라이프사이클 등 상세 사용법은 **[bundle-description.md](./bundle-description.md)**를 참조하세요.
+
 ## 핵심 설계: 역할 기반 스킬 분리
 
 각 에이전트는 시작 시점에 자신의 역할을 명확히 알 수 있도록 **역할별 전용 스킬**을 사용합니다:
