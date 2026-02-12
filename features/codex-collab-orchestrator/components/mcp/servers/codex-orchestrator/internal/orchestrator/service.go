@@ -9,8 +9,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
+	"github.com/cayde/llm/features/codex-collab-orchestrator/components/mcp/servers/codex-orchestrator/internal/provider"
 	"github.com/cayde/llm/features/codex-collab-orchestrator/components/mcp/servers/codex-orchestrator/internal/store"
+	"github.com/cayde/llm/features/codex-collab-orchestrator/components/mcp/servers/codex-orchestrator/internal/tmux"
 )
 
 const (
@@ -22,6 +25,8 @@ const (
 type Service struct {
 	repoPath string
 	store    *store.Store
+	tmux     *tmux.Client
+	provider *provider.Manager
 }
 
 func NewService(repoPath string) (*Service, error) {
@@ -39,6 +44,8 @@ func NewService(repoPath string) (*Service, error) {
 	return &Service{
 		repoPath: absoluteRepoPath,
 		store:    stateStore,
+		tmux:     tmux.NewClient(),
+		provider: provider.NewManager(),
 	}, nil
 }
 
@@ -77,6 +84,14 @@ func (service *Service) Handle(ctx context.Context, method string, rawParams jso
 			return nil, err
 		}
 		return service.store.BuildSessionContext(ctx, input.SessionID)
+	case "session.cleanup":
+		var input sessionCleanupInput
+		if err := decodeParams(rawParams, &input); err != nil {
+			return nil, err
+		}
+		return service.cleanupSession(ctx, input)
+	case "session.list":
+		return service.listSessions(ctx)
 	case "runtime.tmux.ensure":
 		var input runtimeTmuxEnsureInput
 		if err := decodeParams(rawParams, &input); err != nil {
@@ -280,6 +295,18 @@ func (service *Service) Handle(ctx context.Context, method string, rawParams jso
 			return nil, err
 		}
 		return service.stopChildThread(ctx, input)
+	case "thread.child.status":
+		var input threadChildStatusInput
+		if err := decodeParams(rawParams, &input); err != nil {
+			return nil, err
+		}
+		return service.childThreadStatus(ctx, input)
+	case "thread.child.wait_status":
+		var input threadChildWaitStatusInput
+		if err := decodeParams(rawParams, &input); err != nil {
+			return nil, err
+		}
+		return service.waitChildThreadStatus(ctx, input)
 	case "thread.attach_info":
 		var input threadAttachInfoInput
 		if err := decodeParams(rawParams, &input); err != nil {
@@ -518,6 +545,30 @@ func (service *Service) Handle(ctx context.Context, method string, rawParams jso
 			return nil, err
 		}
 		return service.refreshMirror(ctx, input)
+	case "inbox.send":
+		var input inboxSendInput
+		if err := decodeParams(rawParams, &input); err != nil {
+			return nil, err
+		}
+		return service.inboxSend(ctx, input)
+	case "inbox.pending":
+		var input inboxPendingInput
+		if err := decodeParams(rawParams, &input); err != nil {
+			return nil, err
+		}
+		return service.inboxPending(ctx, input)
+	case "inbox.list":
+		var input inboxListInput
+		if err := decodeParams(rawParams, &input); err != nil {
+			return nil, err
+		}
+		return service.inboxList(ctx, input)
+	case "inbox.deliver":
+		var input inboxDeliverInput
+		if err := decodeParams(rawParams, &input); err != nil {
+			return nil, err
+		}
+		return service.inboxDeliver(ctx, input)
 	default:
 		return nil, fmt.Errorf("unsupported method: %s", method)
 	}
@@ -957,8 +1008,10 @@ type threadChildSpawnInput struct {
 	CodexCommand          string          `json:"codex_command"`
 	RunnerKind            string          `json:"runner_kind"`
 	InteractionMode       string          `json:"interaction_mode"`
+	ProviderType          string          `json:"provider"`
 	LaunchCodex           *bool           `json:"launch_codex"`
 	MaxConcurrentChildren *int            `json:"max_concurrent_children"`
+	SkipReadyCheck        *bool           `json:"skip_ready_check"`
 	TaskSpec              json.RawMessage `json:"task_spec"`
 	ScopeTaskIDs          []int64         `json:"scope_task_ids"`
 	ScopeCaseIDs          []int64         `json:"scope_case_ids"`
@@ -987,6 +1040,17 @@ type threadChildStopInput struct {
 	TerminatePane *bool `json:"terminate_pane"`
 }
 
+type threadChildStatusInput struct {
+	ThreadID     int64 `json:"thread_id"`
+	CaptureLines *int  `json:"capture_lines"`
+}
+
+type threadChildWaitStatusInput struct {
+	ThreadID       int64    `json:"thread_id"`
+	TargetStatuses []string `json:"target_statuses"`
+	TimeoutSeconds *int     `json:"timeout_seconds"`
+}
+
 type threadAttachInfoInput struct {
 	SessionID int64  `json:"session_id"`
 	ThreadID  *int64 `json:"thread_id"`
@@ -1006,4 +1070,187 @@ type mergeReviewRequestAutoInput struct {
 type mergeReviewThreadStatusInput struct {
 	ReviewJobID    *int64 `json:"review_job_id"`
 	MergeRequestID *int64 `json:"merge_request_id"`
+}
+
+type inboxSendInput struct {
+	SenderThreadID   int64  `json:"sender_thread_id"`
+	ReceiverThreadID int64  `json:"receiver_thread_id"`
+	Message          string `json:"message"`
+}
+
+type inboxPendingInput struct {
+	ReceiverThreadID int64 `json:"receiver_thread_id"`
+}
+
+type inboxListInput struct {
+	ThreadID int64 `json:"thread_id"`
+}
+
+type inboxDeliverInput struct {
+	MessageID int64 `json:"message_id"`
+}
+
+func (service *Service) waitChildThreadStatus(ctx context.Context, input threadChildWaitStatusInput) (map[string]any, error) {
+	if input.ThreadID <= 0 {
+		return nil, errors.New("thread_id is required")
+	}
+	if len(input.TargetStatuses) == 0 {
+		return nil, errors.New("target_statuses is required")
+	}
+
+	targets := make([]provider.Status, 0, len(input.TargetStatuses))
+	for _, s := range input.TargetStatuses {
+		targets = append(targets, provider.Status(s))
+	}
+
+	timeoutSec := 60
+	if input.TimeoutSeconds != nil && *input.TimeoutSeconds > 0 {
+		timeoutSec = *input.TimeoutSeconds
+	}
+	timeout := time.Duration(timeoutSec) * time.Second
+
+	start := time.Now()
+	achievedStatus, lastResponse, err := service.waitUntilStatus(ctx, input.ThreadID, targets, timeout)
+	elapsed := time.Since(start).Milliseconds()
+
+	if err != nil {
+		return map[string]any{
+			"thread_id":  input.ThreadID,
+			"error":      err.Error(),
+			"elapsed_ms": elapsed,
+		}, nil
+	}
+
+	return map[string]any{
+		"thread_id":       input.ThreadID,
+		"achieved_status": string(achievedStatus),
+		"last_response":   lastResponse,
+		"elapsed_ms":      elapsed,
+	}, nil
+}
+
+func (service *Service) inboxSend(ctx context.Context, input inboxSendInput) (map[string]any, error) {
+	msg, err := service.store.CreateInboxMessage(ctx, store.InboxMessageCreateArgs{
+		SenderThreadID:   input.SenderThreadID,
+		ReceiverThreadID: input.ReceiverThreadID,
+		Message:          input.Message,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"message": msg}, nil
+}
+
+func (service *Service) inboxPending(ctx context.Context, input inboxPendingInput) (map[string]any, error) {
+	if input.ReceiverThreadID <= 0 {
+		return nil, errors.New("receiver_thread_id is required")
+	}
+	messages, err := service.store.ListPendingInboxMessages(ctx, input.ReceiverThreadID)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"messages": messages, "count": len(messages)}, nil
+}
+
+func (service *Service) inboxList(ctx context.Context, input inboxListInput) (map[string]any, error) {
+	if input.ThreadID <= 0 {
+		return nil, errors.New("thread_id is required")
+	}
+	messages, err := service.store.ListInboxMessages(ctx, input.ThreadID)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"messages": messages, "count": len(messages)}, nil
+}
+
+func (service *Service) inboxDeliver(ctx context.Context, input inboxDeliverInput) (map[string]any, error) {
+	if input.MessageID <= 0 {
+		return nil, errors.New("message_id is required")
+	}
+	msg, err := service.store.MarkInboxMessageDelivered(ctx, input.MessageID)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"message": msg}, nil
+}
+
+type sessionCleanupInput struct {
+	SessionID int64 `json:"session_id"`
+}
+
+func (service *Service) cleanupSession(ctx context.Context, input sessionCleanupInput) (map[string]any, error) {
+	if input.SessionID <= 0 {
+		return nil, errors.New("session_id is required")
+	}
+
+	// Stop all running child threads for this session.
+	threads, err := service.store.ListThreads(ctx, store.ThreadFilter{SessionID: input.SessionID})
+	if err != nil {
+		return nil, err
+	}
+
+	stopped := 0
+	for _, thread := range threads {
+		if thread.ParentThreadID == nil {
+			continue
+		}
+		paneID := strings.TrimSpace(valueOrEmpty(thread.TmuxPaneID))
+		if paneID == "" {
+			continue
+		}
+		_ = service.tmux.StopPipePane(ctx, paneID)
+		_ = service.tmux.SendKeysRaw(ctx, paneID, "C-c")
+		_ = service.tmux.KillPane(ctx, paneID)
+		service.provider.Remove(thread.ID)
+		stoppedStatus := "stopped"
+		_, _ = service.store.UpdateThread(ctx, thread.ID, store.ThreadUpdateArgs{
+			Status:     &stoppedStatus,
+			TmuxPaneID: pointerToString(""),
+		})
+		stopped++
+	}
+
+	// Kill the tmux session if it exists.
+	session, err := service.store.GetSessionByID(ctx, input.SessionID)
+	if err != nil {
+		return nil, err
+	}
+	sessionKilled := false
+	if session.TmuxSessionName != nil && strings.TrimSpace(*session.TmuxSessionName) != "" {
+		sessionName := strings.TrimSpace(*session.TmuxSessionName)
+		if service.tmux.HasSession(ctx, sessionName) {
+			_ = service.tmux.KillSession(ctx, sessionName)
+			sessionKilled = true
+		}
+	}
+
+	_, _ = service.store.CloseSession(ctx, input.SessionID)
+
+	return map[string]any{
+		"result":         "cleaned_up",
+		"threads_stopped": stopped,
+		"session_killed":  sessionKilled,
+	}, nil
+}
+
+func (service *Service) listSessions(ctx context.Context) (map[string]any, error) {
+	sessions, err := service.store.ListActiveSessions(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// Enrich with runtime tmux state.
+	enriched := make([]map[string]any, 0, len(sessions))
+	for _, s := range sessions {
+		entry := map[string]any{
+			"session": s,
+		}
+		if s.TmuxSessionName != nil && strings.TrimSpace(*s.TmuxSessionName) != "" {
+			entry["tmux_alive"] = service.tmux.HasSession(ctx, strings.TrimSpace(*s.TmuxSessionName))
+		} else {
+			entry["tmux_alive"] = false
+		}
+		enriched = append(enriched, entry)
+	}
+	return map[string]any{"sessions": enriched, "count": len(enriched)}, nil
 }

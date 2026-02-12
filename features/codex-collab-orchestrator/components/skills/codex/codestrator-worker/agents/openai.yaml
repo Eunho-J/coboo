@@ -1,0 +1,15 @@
+interface:
+  display_name: "Codestrator Worker"
+  short_description: "Child worker for scoped task execution within isolated worktrees"
+  default_prompt: "Execute assigned task scope within isolated worktree, checkpoint progress with work.current_ref, and report completion to root orchestrator."
+  brand_color: "#6ABF69"
+
+dependencies:
+  tools:
+    - codex_collab_orchestrator_codex_orchestrator
+
+metadata:
+  version: "0.1.0"
+  category: "execution"
+  requires_runtime:
+    - git

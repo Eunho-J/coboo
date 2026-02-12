@@ -7,8 +7,8 @@ import (
 // TestToolGroupsDefinition verifies that toolGroups slice contains 8 groups
 // and each group has at least one method.
 func TestToolGroupsDefinition(t *testing.T) {
-	if len(toolGroups) != 8 {
-		t.Errorf("expected 8 tool groups, got %d", len(toolGroups))
+	if len(toolGroups) != 9 {
+		t.Errorf("expected 9 tool groups, got %d", len(toolGroups))
 	}
 
 	expectedGroups := []string{
@@ -19,6 +19,7 @@ func TestToolGroupsDefinition(t *testing.T) {
 		"orch_thread",
 		"orch_lifecycle",
 		"orch_merge",
+		"orch_inbox",
 		"orch_system",
 	}
 
@@ -42,8 +43,8 @@ func TestToolGroupsDefinition(t *testing.T) {
 // TestToolGroupMethodIndex verifies that the toolGroupMethodIndex contains
 // 8 entries and properly maps methods to their groups.
 func TestToolGroupMethodIndex(t *testing.T) {
-	if len(toolGroupMethodIndex) != 8 {
-		t.Errorf("expected 8 entries in method index, got %d", len(toolGroupMethodIndex))
+	if len(toolGroupMethodIndex) != 9 {
+		t.Errorf("expected 9 entries in method index, got %d", len(toolGroupMethodIndex))
 	}
 
 	// Test specific method mappings for each group
@@ -60,6 +61,7 @@ func TestToolGroupMethodIndex(t *testing.T) {
 		{"orch_thread", "thread.child.spawn"},
 		{"orch_lifecycle", "work.current_ref"},
 		{"orch_merge", "merge.request"},
+		{"orch_inbox", "inbox.send"},
 		{"orch_system", "runtime.tmux.ensure"},
 	}
 
@@ -75,34 +77,14 @@ func TestToolGroupMethodIndex(t *testing.T) {
 	}
 }
 
-// TestBuildToolsList verifies that buildToolsList returns 9 tools
-// (8 domain-specific groups + 1 legacy orchestrator.call).
+// TestBuildToolsList verifies that buildToolsList returns 9 tools (domain-specific groups).
 func TestBuildToolsList(t *testing.T) {
 	tools := buildToolsList()
 	if len(tools) != 9 {
 		t.Errorf("expected 9 tools, got %d", len(tools))
 	}
 
-	// Verify legacy orchestrator.call tool exists
-	foundLegacy := false
-	for _, tool := range tools {
-		if tool["name"] == "orchestrator.call" {
-			foundLegacy = true
-			// Verify it has required properties
-			if tool["description"] == nil {
-				t.Error("orchestrator.call missing description")
-			}
-			if tool["inputSchema"] == nil {
-				t.Error("orchestrator.call missing inputSchema")
-			}
-			break
-		}
-	}
-	if !foundLegacy {
-		t.Error("legacy orchestrator.call not found in tools list")
-	}
-
-	// Verify all 8 domain-specific groups exist
+	// Verify all 9 domain-specific groups exist
 	expectedGroups := []string{
 		"orch_session",
 		"orch_task",
@@ -111,6 +93,7 @@ func TestBuildToolsList(t *testing.T) {
 		"orch_thread",
 		"orch_lifecycle",
 		"orch_merge",
+		"orch_inbox",
 		"orch_system",
 	}
 
@@ -205,13 +188,14 @@ func TestNoMethodDuplicates(t *testing.T) {
 // TestToolGroupMethodCounts verifies expected method counts for each group.
 func TestToolGroupMethodCounts(t *testing.T) {
 	expectedCounts := map[string]int{
-		"orch_session":   5, // workspace.init, session.open, session.heartbeat, session.close, session.context
+		"orch_session":   7, // workspace.init, session.open, session.heartbeat, session.close, session.cleanup, session.list, session.context
 		"orch_task":      9, // task.create, task.list, task.get, case.begin, step.check, case.complete, resume.next, resume.candidates.list, resume.candidates.attach
 		"orch_graph":     5, // graph.node.create, graph.node.list, graph.edge.create, graph.checklist.upsert, graph.snapshot.create
 		"orch_workspace": 8, // scheduler.decide_worktree, worktree.create, worktree.list, worktree.spawn, worktree.merge_to_parent, lock.acquire, lock.heartbeat, lock.release
-		"orch_thread":    6, // thread.child.spawn, thread.child.directive, thread.child.list, thread.child.interrupt, thread.child.stop, thread.attach_info
+		"orch_thread":    8, // thread.child.spawn, thread.child.directive, thread.child.list, thread.child.interrupt, thread.child.stop, thread.child.status, thread.child.wait_status, thread.attach_info
 		"orch_lifecycle": 2, // work.current_ref, work.current_ref.ack
 		"orch_merge":     9, // merge.request, merge.review_context, merge.review.request_auto, merge.review.thread_status, merge.main.request, merge.main.next, merge.main.status, merge.main.acquire_lock, merge.main.release_lock
+		"orch_inbox":     4, // inbox.send, inbox.pending, inbox.list, inbox.deliver
 		"orch_system":    11, // runtime.tmux.ensure, runtime.bundle.info, mirror.status, mirror.refresh, plan.bootstrap, plan.slice.generate, plan.slice.replan, plan.rollup.preview, plan.rollup.submit, plan.rollup.approve, plan.rollup.reject
 	}
 

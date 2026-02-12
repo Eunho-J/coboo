@@ -285,6 +285,8 @@ func (store *Store) migrate(ctx context.Context) error {
 			updated_at TEXT NOT NULL,
 			completed_at TEXT NULL
 		);`,
+		`ALTER TABLE threads ADD COLUMN log_file_path TEXT NULL;`,
+		`ALTER TABLE threads ADD COLUMN provider_type TEXT NULL;`,
 		`CREATE INDEX IF NOT EXISTS idx_review_jobs_merge_request ON review_jobs(merge_request_id, id DESC);`,
 		`CREATE TABLE IF NOT EXISTS runtime_prereq_events (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -303,6 +305,16 @@ func (store *Store) migrate(ctx context.Context) error {
 		);`,
 		`INSERT OR IGNORE INTO mirror_meta(id, db_version, md_version, md_path, updated_at)
 		 VALUES(1, 0, 0, '', strftime('%Y-%m-%dT%H:%M:%fZ','now'));`,
+		`CREATE TABLE IF NOT EXISTS inbox_messages (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			sender_thread_id INTEGER NOT NULL,
+			receiver_thread_id INTEGER NOT NULL,
+			message TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT 'pending',
+			created_at TEXT NOT NULL,
+			delivered_at TEXT NULL
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_inbox_receiver_status ON inbox_messages(receiver_thread_id, status);`,
 	}
 
 	for _, statement := range statements {

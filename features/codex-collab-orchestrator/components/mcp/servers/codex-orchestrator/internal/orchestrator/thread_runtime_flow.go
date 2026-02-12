@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cayde/llm/features/codex-collab-orchestrator/components/mcp/servers/codex-orchestrator/internal/provider"
 	"github.com/cayde/llm/features/codex-collab-orchestrator/components/mcp/servers/codex-orchestrator/internal/store"
 )
 
@@ -173,10 +174,7 @@ func (service *Service) directiveChildThread(ctx context.Context, input threadCh
 	paneID := strings.TrimSpace(*thread.TmuxPaneID)
 
 	sendDirective := func() error {
-		if _, err := service.runCommand(ctx, "tmux", "send-keys", "-t", paneID, directive, "C-m"); err != nil {
-			return err
-		}
-		return nil
+		return service.tmux.SendKeys(ctx, paneID, directive)
 	}
 
 	switch mode {
@@ -211,7 +209,7 @@ func (service *Service) directiveChildThread(ctx context.Context, input threadCh
 			"tmux":        tmuxResult,
 		}, nil
 	default:
-		if _, err := service.runCommand(ctx, "tmux", "send-keys", "-t", paneID, "C-c"); err != nil {
+		if err := service.tmux.SendKeysRaw(ctx, paneID, "C-c"); err != nil {
 			return nil, err
 		}
 		if err := sendDirective(); err != nil {
@@ -249,7 +247,7 @@ func (service *Service) interruptChildThread(ctx context.Context, input threadCh
 		return nil, fmt.Errorf("thread has no tmux pane bound: %d", thread.ID)
 	}
 
-	if _, err := service.runCommand(ctx, "tmux", "send-keys", "-t", *thread.TmuxPaneID, "C-c"); err != nil {
+	if err := service.tmux.SendKeysRaw(ctx, *thread.TmuxPaneID, "C-c"); err != nil {
 		return nil, err
 	}
 	interruptedStatus := "interrupted"
@@ -281,10 +279,12 @@ func (service *Service) stopChildThread(ctx context.Context, input threadChildSt
 		return nil, fmt.Errorf("thread has no tmux pane bound: %d", thread.ID)
 	}
 
-	_, _ = service.runCommand(ctx, "tmux", "send-keys", "-t", *thread.TmuxPaneID, "exit", "C-m")
+	_ = service.tmux.StopPipePane(ctx, *thread.TmuxPaneID)
+	_ = service.tmux.SendKeysRaw(ctx, *thread.TmuxPaneID, "exit", "C-m")
+	service.provider.Remove(thread.ID)
 	updateArgs := store.ThreadUpdateArgs{}
 	if boolValueOrDefault(input.TerminatePane, false) {
-		_, _ = service.runCommand(ctx, "tmux", "kill-pane", "-t", *thread.TmuxPaneID)
+		_ = service.tmux.KillPane(ctx, *thread.TmuxPaneID)
 		updateArgs.TmuxPaneID = pointerToString("")
 		updateArgs.TmuxWindowName = pointerToString("")
 	}
@@ -299,6 +299,69 @@ func (service *Service) stopChildThread(ctx context.Context, input threadChildSt
 		"thread": updatedThread,
 		"result": "stopped",
 	}, nil
+}
+
+func (service *Service) childThreadStatus(ctx context.Context, input threadChildStatusInput) (map[string]any, error) {
+	if input.ThreadID <= 0 {
+		return nil, errors.New("thread_id is required")
+	}
+	thread, err := service.store.GetThreadByID(ctx, input.ThreadID)
+	if err != nil {
+		return nil, err
+	}
+	if thread.ParentThreadID == nil {
+		return nil, fmt.Errorf("thread is not a child thread: %d", thread.ID)
+	}
+
+	result := map[string]any{
+		"thread_id":   thread.ID,
+		"db_status":   thread.Status,
+		"pane_exists": false,
+	}
+
+	paneID := strings.TrimSpace(valueOrEmpty(thread.TmuxPaneID))
+	if paneID == "" {
+		return result, nil
+	}
+	result["pane_exists"] = service.tmux.PaneExists(ctx, paneID)
+
+	// Tier 1: Fast check via pipe-pane log tail.
+	providerTypeName := strings.TrimSpace(valueOrEmpty(thread.ProviderType))
+	p, hasProvider := service.provider.Get(thread.ID)
+	if !hasProvider && providerTypeName != "" {
+		p, _ = service.provider.Create(thread.ID, providerTypeName)
+		hasProvider = p != nil
+	}
+
+	logPath := strings.TrimSpace(valueOrEmpty(thread.LogFilePath))
+	if hasProvider && logPath != "" {
+		logTail, readErr := readFileTail(logPath, 4096)
+		if readErr == nil && logTail != "" {
+			fastStatus := p.GetStatus(logTail)
+			result["provider_status"] = string(fastStatus)
+			result["detection_tier"] = "fast"
+			result["last_response"] = p.ExtractLastResponse(logTail)
+			return result, nil
+		}
+	}
+
+	// Tier 2: Full tmux capture-pane.
+	captureLines := 200
+	if input.CaptureLines != nil && *input.CaptureLines > 0 {
+		captureLines = *input.CaptureLines
+	}
+	captured, captureErr := service.tmux.CaptureHistory(ctx, paneID, captureLines)
+	if captureErr != nil {
+		result["capture_error"] = captureErr.Error()
+		return result, nil
+	}
+	if hasProvider {
+		fullStatus := p.GetStatus(captured)
+		result["provider_status"] = string(fullStatus)
+		result["detection_tier"] = "full"
+		result["last_response"] = p.ExtractLastResponse(captured)
+	}
+	return result, nil
 }
 
 func (service *Service) threadAttachInfo(ctx context.Context, input threadAttachInfoInput) (map[string]any, error) {
@@ -496,6 +559,10 @@ func (service *Service) spawnChildThreadInternal(ctx context.Context, input thre
 	if interactionMode == "" {
 		interactionMode = defaultInteractionMode
 	}
+	providerType := strings.TrimSpace(input.ProviderType)
+	if providerType == "" {
+		providerType = "codex"
+	}
 
 	resolvedGuidePath := service.resolveAgentGuidePathForRole(role, input.AgentGuidePath)
 	agentOverride := normalizeAgentOverride(input.AgentOverride)
@@ -523,6 +590,7 @@ func (service *Service) spawnChildThreadInternal(ctx context.Context, input thre
 		ScopeTaskIDsJSON: scopeTaskIDsJSON,
 		ScopeCaseIDsJSON: scopeCaseIDsJSON,
 		ScopeNodeIDsJSON: scopeNodeIDsJSON,
+		ProviderType:     providerType,
 	})
 	if err != nil {
 		return store.Thread{}, nil, nil, err
@@ -540,6 +608,15 @@ func (service *Service) spawnChildThreadInternal(ctx context.Context, input thre
 	workdir, err := service.resolveThreadWorkdir(ctx, session, input.WorktreeID)
 	if err != nil {
 		return store.Thread{}, nil, nil, err
+	}
+	if input.WorktreeID == nil {
+		parentThread, parentErr := service.store.GetThreadByID(ctx, parentThreadID)
+		if parentErr == nil && parentThread.TmuxPaneID != nil && strings.TrimSpace(*parentThread.TmuxPaneID) != "" {
+			parentWorkdir, cwdErr := service.tmux.GetPaneWorkingDirectory(ctx, strings.TrimSpace(*parentThread.TmuxPaneID))
+			if cwdErr == nil && strings.TrimSpace(parentWorkdir) != "" {
+				workdir = strings.TrimSpace(parentWorkdir)
+			}
+		}
 	}
 	childSessionName := strings.TrimSpace(input.TmuxSessionName)
 	if childSessionName == "" {
@@ -576,6 +653,49 @@ func (service *Service) spawnChildThreadInternal(ctx context.Context, input thre
 		return store.Thread{}, nil, nil, err
 	}
 
+	// cleanupOnFailure tears down resources created during spawn and marks the
+	// thread as "failed" so that callers never see a dangling "planned" record.
+	// It uses a detached context so cleanup still runs if the caller's ctx is cancelled.
+	cleanupOnFailure := func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cleanupCancel()
+		_ = service.tmux.StopPipePane(cleanupCtx, paneID)
+		service.provider.Remove(createdThread.ID)
+		_ = service.tmux.KillPane(cleanupCtx, paneID)
+		failedStatus := "failed"
+		_, _ = service.store.UpdateThread(cleanupCtx, createdThread.ID, store.ThreadUpdateArgs{
+			Status: &failedStatus,
+		})
+	}
+
+	// Register provider for this thread.
+	if _, regErr := service.provider.Create(createdThread.ID, providerType); regErr != nil {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cleanupCancel()
+		_ = service.tmux.KillPane(cleanupCtx, paneID)
+		failedStatus := "failed"
+		_, _ = service.store.UpdateThread(cleanupCtx, createdThread.ID, store.ThreadUpdateArgs{
+			Status: &failedStatus,
+		})
+		return store.Thread{}, nil, nil, fmt.Errorf("failed to create provider %q: %w", providerType, regErr)
+	}
+
+	// Start pipe-pane logging.
+	logDir := filepath.Join(service.repoPath, ".codex-orch", "logs")
+	_ = os.MkdirAll(logDir, 0o755)
+	logFilePath := filepath.Join(logDir, fmt.Sprintf("thread_%d.log", createdThread.ID))
+	if ppErr := service.tmux.StartPipePane(ctx, paneID, logFilePath); ppErr != nil {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cleanupCancel()
+		service.provider.Remove(createdThread.ID)
+		_ = service.tmux.KillPane(cleanupCtx, paneID)
+		failedStatus := "failed"
+		_, _ = service.store.UpdateThread(cleanupCtx, createdThread.ID, store.ThreadUpdateArgs{
+			Status: &failedStatus,
+		})
+		return store.Thread{}, nil, nil, fmt.Errorf("failed to start pipe-pane: %w", ppErr)
+	}
+
 	launchCodex := boolValueOrDefault(input.LaunchCodex, true)
 	launchCommand := strings.TrimSpace(input.LaunchCommand)
 	if launchCommand == "" && launchCodex {
@@ -589,29 +709,75 @@ func (service *Service) spawnChildThreadInternal(ctx context.Context, input thre
 			launchCommand = service.defaultAgentsRunnerLaunchCommand(workdir, input.SessionID, createdThread, role, initialPrompt)
 		}
 	}
-	if strings.TrimSpace(launchCommand) != "" {
-		if _, err := service.runCommand(ctx, "tmux", "send-keys", "-t", paneID, launchCommand, "C-m"); err != nil {
-			return store.Thread{}, nil, nil, err
-		}
-	}
-
-	threadStatus := "planned"
-	if strings.TrimSpace(launchCommand) != "" {
-		threadStatus = "running"
-	}
+	// Persist pane/log metadata to DB BEFORE launching command or polling status.
+	// waitUntilStatus reads TmuxPaneID and LogFilePath from DB, so they must be
+	// written first to avoid a NULL-field race condition.
+	plannedStatus := "planned"
 	updatedThread, err := service.store.UpdateThread(ctx, createdThread.ID, store.ThreadUpdateArgs{
-		Status:          &threadStatus,
+		Status:          &plannedStatus,
 		TmuxSessionName: &childSessionName,
 		TmuxWindowName:  &childWindowName,
 		TmuxPaneID:      &paneID,
 		LaunchCommand:   &launchCommand,
+		LogFilePath:     &logFilePath,
+		ProviderType:    &providerType,
 	})
 	if err != nil {
+		cleanupOnFailure()
+		return store.Thread{}, nil, nil, err
+	}
+
+	if strings.TrimSpace(launchCommand) != "" {
+		if err := service.tmux.SendKeys(ctx, paneID, launchCommand); err != nil {
+			cleanupOnFailure()
+			return store.Thread{}, nil, nil, fmt.Errorf("send launch command: %w", err)
+		}
+	}
+
+	readyCheckResult := "skipped"
+	if strings.TrimSpace(launchCommand) != "" && !boolValueOrDefault(input.SkipReadyCheck, false) {
+		readyTimeout := 30 * time.Second
+		achievedStatus, _, waitErr := service.waitUntilStatus(ctx, updatedThread.ID, []provider.Status{
+			provider.StatusIdle,
+			provider.StatusCompleted,
+		}, readyTimeout)
+		if waitErr != nil {
+			if strings.Contains(waitErr.Error(), "did not reach target status within") ||
+				ctx.Err() != nil {
+				readyCheckResult = "timeout"
+			} else {
+				readyCheckResult = "error"
+				tmuxResult["ready_check_error"] = waitErr.Error()
+			}
+		} else {
+			readyCheckResult = string(achievedStatus)
+		}
+	}
+	tmuxResult["ready_check"] = readyCheckResult
+
+	// Update thread status based on ready-check outcome.
+	threadStatus := "planned"
+	if strings.TrimSpace(launchCommand) != "" {
+		switch readyCheckResult {
+		case "timeout":
+			threadStatus = "initializing"
+		case "error":
+			threadStatus = "initializing"
+		default:
+			threadStatus = "running"
+		}
+	}
+	updatedThread, err = service.store.UpdateThread(ctx, updatedThread.ID, store.ThreadUpdateArgs{
+		Status: &threadStatus,
+	})
+	if err != nil {
+		cleanupOnFailure()
 		return store.Thread{}, nil, nil, err
 	}
 
 	attachInfo, err = service.buildAttachInfo(ctx, session, &updatedThread)
 	if err != nil {
+		cleanupOnFailure()
 		return store.Thread{}, nil, nil, err
 	}
 	return updatedThread, attachInfo, tmuxResult, nil
@@ -733,60 +899,32 @@ func (service *Service) ensureTmuxSession(ctx context.Context, sessionName strin
 	}
 
 	created := false
-	if _, err := service.runCommand(ctx, "tmux", "has-session", "-t", sessionName); err != nil {
-		args := []string{"new-session", "-d", "-s", sessionName}
-		if strings.TrimSpace(windowName) != "" {
-			args = append(args, "-n", windowName)
-		}
-		args = append(args, "-c", workdir)
-		if _, createErr := service.runCommand(ctx, "tmux", args...); createErr != nil {
-			return "", false, createErr
+	if !service.tmux.HasSession(ctx, sessionName) {
+		if err := service.tmux.NewSession(ctx, sessionName, windowName, workdir); err != nil {
+			return "", false, err
 		}
 		created = true
 	}
 
 	targetWindow := fmt.Sprintf("%s:0", sessionName)
 	if strings.TrimSpace(windowName) != "" {
-		if _, err := service.runCommand(ctx, "tmux", "rename-window", "-t", targetWindow, windowName); err != nil {
+		if err := service.tmux.RenameWindow(ctx, targetWindow, windowName); err != nil {
 			return "", false, err
 		}
 	}
 
-	panesOutput, err := service.runCommand(ctx, "tmux", "list-panes", "-t", targetWindow, "-F", "#{pane_id}")
+	panes, err := service.tmux.ListPanes(ctx, targetWindow)
 	if err != nil {
 		return "", false, err
 	}
-	lines := strings.Split(strings.TrimSpace(panesOutput), "\n")
-	if len(lines) == 0 || strings.TrimSpace(lines[0]) == "" {
+	if len(panes) == 0 || strings.TrimSpace(panes[0]) == "" {
 		return "", false, fmt.Errorf("tmux session has no panes: %s", sessionName)
 	}
-	return strings.TrimSpace(lines[0]), created, nil
+	return strings.TrimSpace(panes[0]), created, nil
 }
 
 func (service *Service) createTmuxPane(ctx context.Context, target string, workdir string, splitDirection string) (string, error) {
-	directionFlag := "-v"
-	if strings.EqualFold(strings.TrimSpace(splitDirection), "horizontal") {
-		directionFlag = "-h"
-	}
-
-	output, err := service.runCommand(
-		ctx,
-		"tmux",
-		"split-window",
-		directionFlag,
-		"-t", target,
-		"-c", workdir,
-		"-P",
-		"-F", "#{pane_id}",
-	)
-	if err != nil {
-		return "", err
-	}
-	paneID := strings.TrimSpace(output)
-	if paneID == "" {
-		return "", errors.New("failed to capture tmux pane id")
-	}
-	return paneID, nil
+	return service.tmux.SplitWindow(ctx, target, workdir, splitDirection)
 }
 
 func (service *Service) defaultCodexLaunchCommand(workdir string, codexCommand string, agentGuidePath string, initialPrompt string) string {
@@ -870,7 +1008,7 @@ func (service *Service) ensureChildPaneCapacity(ctx context.Context, sessionID i
 		if paneID == "" {
 			continue
 		}
-		_, _ = service.runCommand(ctx, "tmux", "kill-pane", "-t", paneID)
+		_ = service.tmux.KillPane(ctx, paneID)
 		stoppedStatus := "stopped"
 		_, _ = service.store.UpdateThread(ctx, candidate.ID, store.ThreadUpdateArgs{
 			Status:         &stoppedStatus,
@@ -887,17 +1025,7 @@ func (service *Service) ensureChildPaneCapacity(ctx context.Context, sessionID i
 }
 
 func (service *Service) tmuxPaneExists(ctx context.Context, paneID string) (bool, error) {
-	if strings.TrimSpace(paneID) == "" {
-		return false, nil
-	}
-	if _, err := service.runCommand(ctx, "tmux", "display-message", "-p", "-t", paneID, "#{pane_id}"); err != nil {
-		errLower := strings.ToLower(err.Error())
-		if strings.Contains(errLower, "can't find pane") || strings.Contains(errLower, "can't find window") || strings.Contains(errLower, "can't find session") {
-			return false, nil
-		}
-		return false, err
-	}
-	return true, nil
+	return service.tmux.PaneExists(ctx, paneID), nil
 }
 
 func normalizeWindowName(windowName string, fallback string) string {
@@ -1061,15 +1189,6 @@ Execution rules:
 		templateText,
 		prettyJSON(contextPayload),
 	)
-}
-
-func (service *Service) runCommand(ctx context.Context, name string, args ...string) (string, error) {
-	command := exec.CommandContext(ctx, name, args...)
-	output, err := command.CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("%s %s failed: %w (%s)", name, strings.Join(args, " "), err, strings.TrimSpace(string(output)))
-	}
-	return strings.TrimSpace(string(output)), nil
 }
 
 type tmuxInstallResult struct {
@@ -1250,4 +1369,102 @@ func normalizePathForThread(path string) string {
 		return trimmedPath
 	}
 	return filepath.Clean(trimmedPath)
+}
+
+func readFileTail(path string, maxBytes int64) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	info, err := f.Stat()
+	if err != nil {
+		return "", err
+	}
+
+	size := info.Size()
+	if size <= maxBytes {
+		data, readErr := os.ReadFile(path)
+		return string(data), readErr
+	}
+
+	offset := size - maxBytes
+	buf := make([]byte, maxBytes)
+	n, err := f.ReadAt(buf, offset)
+	if err != nil && n == 0 {
+		return "", err
+	}
+	return string(buf[:n]), nil
+}
+
+func (service *Service) waitUntilStatus(ctx context.Context, threadID int64, targetStatuses []provider.Status, timeout time.Duration) (provider.Status, string, error) {
+	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	targetSet := make(map[provider.Status]bool, len(targetStatuses))
+	for _, s := range targetStatuses {
+		targetSet[s] = true
+	}
+
+	backoff := 500 * time.Millisecond
+	const maxBackoff = 5 * time.Second
+
+	for {
+		select {
+		case <-timeoutCtx.Done():
+			return "", "", fmt.Errorf("thread %d did not reach target status within %v", threadID, timeout)
+		default:
+		}
+
+		thread, err := service.store.GetThreadByID(timeoutCtx, threadID)
+		if err != nil {
+			return "", "", fmt.Errorf("failed to get thread %d: %w", threadID, err)
+		}
+
+		paneID := strings.TrimSpace(valueOrEmpty(thread.TmuxPaneID))
+		if paneID == "" {
+			return "", "", fmt.Errorf("thread %d has no tmux pane", threadID)
+		}
+
+		providerTypeName := strings.TrimSpace(valueOrEmpty(thread.ProviderType))
+		p, hasProvider := service.provider.Get(thread.ID)
+		if !hasProvider && providerTypeName != "" {
+			p, _ = service.provider.Create(thread.ID, providerTypeName)
+			hasProvider = p != nil
+		}
+
+		if hasProvider {
+			logPath := strings.TrimSpace(valueOrEmpty(thread.LogFilePath))
+			if logPath != "" {
+				logTail, readErr := readFileTail(logPath, 4096)
+				if readErr == nil && logTail != "" {
+					fastStatus := p.GetStatus(logTail)
+					if targetSet[fastStatus] {
+						lastResponse := p.ExtractLastResponse(logTail)
+						return fastStatus, lastResponse, nil
+					}
+				}
+			}
+
+			captured, captureErr := service.tmux.CaptureHistory(timeoutCtx, paneID, 200)
+			if captureErr == nil && captured != "" {
+				fullStatus := p.GetStatus(captured)
+				if targetSet[fullStatus] {
+					lastResponse := p.ExtractLastResponse(captured)
+					return fullStatus, lastResponse, nil
+				}
+			}
+		}
+
+		select {
+		case <-time.After(backoff):
+			backoff *= 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
+		case <-timeoutCtx.Done():
+			return "", "", fmt.Errorf("thread %d did not reach target status within %v", threadID, timeout)
+		}
+	}
 }

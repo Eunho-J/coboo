@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/cayde/llm/features/codex-collab-orchestrator/components/mcp/servers/codex-orchestrator/internal/tmux"
 )
 
 var slugTokenPattern = regexp.MustCompile(`[a-z0-9]+`)
@@ -86,12 +88,12 @@ func (service *Service) buildViewerTmuxSessionName(worktreePath string) string {
 	if worktreeName == "" {
 		worktreeName = "worktree"
 	}
-	sessionName := fmt.Sprintf("%s-%s", repositoryName, worktreeName)
+	sessionName := fmt.Sprintf("%s%s-%s", tmux.SessionPrefix, repositoryName, worktreeName)
 	if len(sessionName) > 80 {
 		sessionName = strings.Trim(sessionName[:80], "-")
 	}
 	if sessionName == "" {
-		return "repo-worktree"
+		return tmux.SessionPrefix + "repo-worktree"
 	}
 	return sessionName
 }

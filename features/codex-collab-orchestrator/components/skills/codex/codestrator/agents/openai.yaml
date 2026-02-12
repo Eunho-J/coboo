@@ -1,7 +1,7 @@
 interface:
   display_name: "Codestrator"
-  short_description: "Run parallel Codex work with lock and checkpoint controls"
-  default_prompt: "Use caller CLI as root orchestrator, always branch into a 1-2 word worktree, spawn child agents in read-only tmux viewer panes, and finish with lock-guarded merge-agent review."
+  short_description: "Root orchestrator for parallel Codex work with worktree isolation"
+  default_prompt: "Coordinate parallel Codex sessions: branch into worktree, decompose tasks, spawn child workers with codestrator-worker skill, and finish with lock-guarded merge review."
   brand_color: "#4A90D9"
 
 dependencies:
@@ -9,7 +9,7 @@ dependencies:
     - codex_collab_orchestrator_codex_orchestrator
 
 metadata:
-  version: "0.1.0"
+  version: "0.2.0"
   category: "orchestration"
   requires_runtime:
     - tmux

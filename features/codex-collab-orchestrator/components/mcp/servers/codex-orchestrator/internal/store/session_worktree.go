@@ -229,6 +229,28 @@ func (store *Store) GetSessionByID(ctx context.Context, sessionID int64) (Sessio
 	return scanSession(row)
 }
 
+func (store *Store) ListActiveSessions(ctx context.Context) ([]Session, error) {
+	rows, err := store.database.QueryContext(ctx,
+		`SELECT `+sessionSelectColumns+`
+		   FROM sessions
+		  WHERE status != 'closed'
+		  ORDER BY id DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	sessions := make([]Session, 0)
+	for rows.Next() {
+		s, scanErr := scanSession(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		sessions = append(sessions, s)
+	}
+	return sessions, rows.Err()
+}
+
 func (store *Store) GetPendingDelegationSession(ctx context.Context) (*Session, error) {
 	row := store.database.QueryRowContext(
 		ctx,

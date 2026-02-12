@@ -28,7 +28,7 @@ var toolGroups = []toolGroup{
 	{
 		Name:        "orch_session",
 		Description: "Session and workspace initialization management",
-		Methods:     []string{"workspace.init", "session.open", "session.heartbeat", "session.close", "session.context"},
+		Methods:     []string{"workspace.init", "session.open", "session.heartbeat", "session.close", "session.cleanup", "session.list", "session.context"},
 	},
 	{
 		Name:        "orch_task",
@@ -48,7 +48,7 @@ var toolGroups = []toolGroup{
 	{
 		Name:        "orch_thread",
 		Description: "Child thread spawning, directives, and lifecycle control",
-		Methods:     []string{"thread.child.spawn", "thread.child.directive", "thread.child.list", "thread.child.interrupt", "thread.child.stop", "thread.attach_info"},
+		Methods:     []string{"thread.child.spawn", "thread.child.directive", "thread.child.list", "thread.child.interrupt", "thread.child.stop", "thread.child.status", "thread.child.wait_status", "thread.attach_info"},
 	},
 	{
 		Name:        "orch_lifecycle",
@@ -59,6 +59,11 @@ var toolGroups = []toolGroup{
 		Name:        "orch_merge",
 		Description: "Branch merge requests, reviews, and main-line merge operations",
 		Methods:     []string{"merge.request", "merge.review_context", "merge.review.request_auto", "merge.review.thread_status", "merge.main.request", "merge.main.next", "merge.main.status", "merge.main.acquire_lock", "merge.main.release_lock"},
+	},
+	{
+		Name:        "orch_inbox",
+		Description: "Thread-to-thread messaging: send, receive, and deliver messages",
+		Methods:     []string{"inbox.send", "inbox.pending", "inbox.list", "inbox.deliver"},
 	},
 	{
 		Name:        "orch_system",
@@ -424,40 +429,14 @@ func handleToolCall(service *orchestrator.Service, rawParams json.RawMessage) (m
 		return nil, fmt.Errorf("invalid tools/call params: %w", err)
 	}
 
-	switch {
-	case input.Name == "orchestrator.call":
-		return handleOrchestratorCall(service, input.Arguments)
-	case toolGroupMethodIndex[input.Name] != nil:
+	if toolGroupMethodIndex[input.Name] != nil {
 		return handleGroupToolCall(service, input.Name, input.Arguments)
-	default:
-		return toolErrorResult(fmt.Sprintf("unknown tool: %s", input.Name)), nil
 	}
+	return toolErrorResult(fmt.Sprintf("unknown tool: %s", input.Name)), nil
 }
 
 func buildToolsList() []map[string]any {
-	tools := make([]map[string]any, 0, len(toolGroups)+1)
-
-	// Legacy orchestrator.call tool (accepts all methods).
-	tools = append(tools, map[string]any{
-		"name":        "orchestrator.call",
-		"description": "Call one codex-orchestrator backend method by name.",
-		"inputSchema": map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"method": map[string]any{
-					"type":        "string",
-					"description": "Backend method name (e.g. workspace.init, session.open).",
-				},
-				"params": map[string]any{
-					"type":        "object",
-					"description": "Method params object.",
-					"default":     map[string]any{},
-				},
-			},
-			"required":             []string{"method"},
-			"additionalProperties": false,
-		},
-	})
+	tools := make([]map[string]any, 0, len(toolGroups))
 
 	// Domain-specific tool groups.
 	for _, g := range toolGroups {
@@ -489,27 +468,6 @@ func buildToolsList() []map[string]any {
 	}
 
 	return tools
-}
-
-func handleOrchestratorCall(service *orchestrator.Service, arguments json.RawMessage) (map[string]any, error) {
-	var args orchestratorCallArguments
-	if err := json.Unmarshal(arguments, &args); err != nil {
-		return nil, fmt.Errorf("invalid orchestrator.call arguments: %w", err)
-	}
-	if strings.TrimSpace(args.Method) == "" {
-		return nil, fmt.Errorf("orchestrator.call requires arguments.method")
-	}
-
-	params := args.Params
-	if len(bytesTrimSpace(params)) == 0 {
-		params = json.RawMessage(`{}`)
-	}
-
-	result, err := service.Handle(context.Background(), args.Method, params)
-	if err != nil {
-		return toolErrorResult(err.Error()), nil
-	}
-	return toolSuccessResult(result)
 }
 
 func handleGroupToolCall(service *orchestrator.Service, toolName string, arguments json.RawMessage) (map[string]any, error) {

@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const threadSelectColumns = `id, session_id, parent_thread_id, role, status, title, objective, worktree_id, agent_guide_path, agent_override, task_spec_json, scope_task_ids_json, scope_case_ids_json, scope_node_ids_json, tmux_session_name, tmux_window_name, tmux_pane_id, launch_command, created_at, started_at, completed_at, updated_at`
+const threadSelectColumns = `id, session_id, parent_thread_id, role, status, title, objective, worktree_id, agent_guide_path, agent_override, task_spec_json, scope_task_ids_json, scope_case_ids_json, scope_node_ids_json, tmux_session_name, tmux_window_name, tmux_pane_id, launch_command, log_file_path, provider_type, created_at, started_at, completed_at, updated_at`
 
 func (store *Store) CreateThread(ctx context.Context, args ThreadCreateArgs) (Thread, error) {
 	if args.SessionID <= 0 {
@@ -43,8 +43,8 @@ func (store *Store) CreateThread(ctx context.Context, args ThreadCreateArgs) (Th
 			session_id, parent_thread_id, role, status, title, objective, worktree_id,
 			agent_guide_path, agent_override, task_spec_json, scope_task_ids_json, scope_case_ids_json, scope_node_ids_json,
 			tmux_session_name, tmux_window_name, tmux_pane_id,
-			launch_command, created_at, started_at, completed_at, updated_at
-		) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?, NULL, ?)`,
+			launch_command, log_file_path, provider_type, created_at, started_at, completed_at, updated_at
+		) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, ?, ?, ?, NULL, ?)`,
 		args.SessionID,
 		args.ParentThreadID,
 		role,
@@ -58,6 +58,7 @@ func (store *Store) CreateThread(ctx context.Context, args ThreadCreateArgs) (Th
 		nullableText(args.ScopeTaskIDsJSON),
 		nullableText(args.ScopeCaseIDsJSON),
 		nullableText(args.ScopeNodeIDsJSON),
+		nullableText(args.ProviderType),
 		now,
 		startedAt,
 		now,
@@ -200,6 +201,14 @@ func (store *Store) UpdateThread(ctx context.Context, threadID int64, args Threa
 	if args.LaunchCommand != nil {
 		setClauses = append(setClauses, "launch_command = ?")
 		params = append(params, nullableText(*args.LaunchCommand))
+	}
+	if args.LogFilePath != nil {
+		setClauses = append(setClauses, "log_file_path = ?")
+		params = append(params, nullableText(*args.LogFilePath))
+	}
+	if args.ProviderType != nil {
+		setClauses = append(setClauses, "provider_type = ?")
+		params = append(params, nullableText(*args.ProviderType))
 	}
 	if args.TaskSpecJSON != nil {
 		setClauses = append(setClauses, "task_spec_json = ?")
@@ -490,6 +499,8 @@ func scanThread(scanner rowScanner) (Thread, error) {
 	var tmuxWindowName sql.NullString
 	var tmuxPaneID sql.NullString
 	var launchCommand sql.NullString
+	var logFilePath sql.NullString
+	var providerType sql.NullString
 	var startedAt sql.NullString
 	var completedAt sql.NullString
 	err := scanner.Scan(
@@ -511,6 +522,8 @@ func scanThread(scanner rowScanner) (Thread, error) {
 		&tmuxWindowName,
 		&tmuxPaneID,
 		&launchCommand,
+		&logFilePath,
+		&providerType,
 		&thread.CreatedAt,
 		&startedAt,
 		&completedAt,
@@ -561,6 +574,12 @@ func scanThread(scanner rowScanner) (Thread, error) {
 	}
 	if launchCommand.Valid {
 		thread.LaunchCommand = &launchCommand.String
+	}
+	if logFilePath.Valid {
+		thread.LogFilePath = &logFilePath.String
+	}
+	if providerType.Valid {
+		thread.ProviderType = &providerType.String
 	}
 	if startedAt.Valid {
 		thread.StartedAt = &startedAt.String

@@ -173,6 +173,8 @@ type Thread struct {
 	TmuxWindowName   *string `json:"tmux_window_name,omitempty"`
 	TmuxPaneID       *string `json:"tmux_pane_id,omitempty"`
 	LaunchCommand    *string `json:"launch_command,omitempty"`
+	LogFilePath      *string `json:"log_file_path,omitempty"`
+	ProviderType     *string `json:"provider_type,omitempty"`
 	CreatedAt        string  `json:"created_at"`
 	StartedAt        *string `json:"started_at,omitempty"`
 	CompletedAt      *string `json:"completed_at,omitempty"`
@@ -367,6 +369,7 @@ type ThreadCreateArgs struct {
 	ScopeTaskIDsJSON string
 	ScopeCaseIDsJSON string
 	ScopeNodeIDsJSON string
+	ProviderType     string
 }
 
 type ThreadFilter struct {
@@ -382,6 +385,8 @@ type ThreadUpdateArgs struct {
 	TmuxWindowName   *string
 	TmuxPaneID       *string
 	LaunchCommand    *string
+	LogFilePath      *string
+	ProviderType     *string
 	TaskSpecJSON     *string
 	ScopeTaskIDsJSON *string
 	ScopeCaseIDsJSON *string
@@ -452,4 +457,20 @@ type NodeSnapshotCreateArgs struct {
 	Summary           string
 	AffectedFilesJSON string
 	NextAction        string
+}
+
+type InboxMessage struct {
+	ID               int64   `json:"id"`
+	SenderThreadID   int64   `json:"sender_thread_id"`
+	ReceiverThreadID int64   `json:"receiver_thread_id"`
+	Message          string  `json:"message"`
+	Status           string  `json:"status"`
+	CreatedAt        string  `json:"created_at"`
+	DeliveredAt      *string `json:"delivered_at,omitempty"`
+}
+
+type InboxMessageCreateArgs struct {
+	SenderThreadID   int64
+	ReceiverThreadID int64
+	Message          string
 }

@@ -1,0 +1,15 @@
+interface:
+  display_name: "Codestrator Reviewer"
+  short_description: "Merge reviewer for pre-merge quality gates and conflict inspection"
+  default_prompt: "Review target branch for merge conflicts, missing changes, contract violations, and quality issues. Report findings with evidence and render APPROVE/BLOCK verdict."
+  brand_color: "#E8A838"
+
+dependencies:
+  tools:
+    - codex_collab_orchestrator_codex_orchestrator
+
+metadata:
+  version: "0.1.0"
+  category: "review"
+  requires_runtime:
+    - git
