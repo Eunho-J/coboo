@@ -90,6 +90,7 @@ Root Orchestrator (caller CLI - tmux 밖)
 ```
 Phase 1: Initialize
   workspace.init → session.open → runtime.tmux.ensure
+  NOTE: attach_info는 첫 thread.child.spawn 응답에서 제공됨
 
 Phase 2: Plan & Decompose
   task.create (Epic → Feature → TestGroup → Case → Step)

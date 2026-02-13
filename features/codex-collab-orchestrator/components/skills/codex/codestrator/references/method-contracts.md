@@ -42,7 +42,7 @@ Each method is accessible through its domain-specific tool or through the legacy
     - `root_mode=caller_cli`
     - `worktree_slug`
     - `viewer_tmux_session`
-    - `child_attach_hint`
+    - `note` (tmux session is created when first child is spawned)
 
 - `session.heartbeat`
   - input: `session_id`

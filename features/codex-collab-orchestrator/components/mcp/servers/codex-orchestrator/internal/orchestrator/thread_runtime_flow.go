@@ -24,10 +24,8 @@ const (
 	defaultDocMirrorPath      = ".codex/agents/codex-collab-orchestrator/codex/doc-mirror-manager.md"
 	defaultPlanArchitectPath  = ".codex/agents/codex-collab-orchestrator/codex/plan-architect.md"
 	defaultChildWindowName    = "children"
-	defaultCodexCommand       = "codex --no-alt-screen"
-	defaultAgentsRunnerScript = "features/codex-collab-orchestrator/components/mcp/servers/codex-orchestrator/scripts/agents_codex_runner.py"
-	defaultPythonCommand      = "python3"
-	defaultRunnerKind         = "agents_sdk_codex_mcp"
+	defaultCodexCommand = "codex --no-alt-screen"
+	defaultRunnerKind   = "agents_sdk_codex_mcp"
 	defaultInteractionMode    = "view_only"
 	defaultMaxChildThreads    = 6
 )
@@ -938,7 +936,7 @@ func (service *Service) defaultCodexLaunchCommand(workdir string, codexCommand s
 
 	baseCommand := fmt.Sprintf("cd %s", quotedDir)
 	if guidePath != "" {
-		baseCommand = fmt.Sprintf("%s && echo \"[codex-orchestrator] agent guide: %s\"", baseCommand, shellQuote(guidePath))
+		baseCommand = fmt.Sprintf("%s && printf '%%s\\n' %s", baseCommand, shellQuote("[codex-orchestrator] agent guide: "+guidePath))
 	}
 	if prompt == "" {
 		return fmt.Sprintf("%s && %s", baseCommand, command)
@@ -947,19 +945,30 @@ func (service *Service) defaultCodexLaunchCommand(workdir string, codexCommand s
 }
 
 func (service *Service) defaultAgentsRunnerLaunchCommand(workdir string, sessionID int64, childThread store.Thread, role string, initialPrompt string) string {
-	scriptPath := filepath.Join(service.repoPath, defaultAgentsRunnerScript)
-	baseCommand := fmt.Sprintf(
-		"%s %s --mode child --session-id %d --thread-id %d --role %s",
-		defaultPythonCommand,
-		shellQuote(scriptPath),
+	envVars := fmt.Sprintf(
+		"COBOO_RUNNER_MODE=child COBOO_SESSION_ID=%d COBOO_THREAD_ID=%d COBOO_THREAD_ROLE=%s",
 		sessionID,
 		childThread.ID,
 		shellQuote(role),
 	)
-	if strings.TrimSpace(initialPrompt) != "" {
-		baseCommand = fmt.Sprintf("%s --initial-prompt %s", baseCommand, shellQuote(initialPrompt))
+
+	guidePath := strings.TrimSpace(normalizePathForThread(valueOrEmpty(childThread.AgentGuidePath)))
+	prompt := strings.TrimSpace(initialPrompt)
+
+	parts := []string{
+		fmt.Sprintf("cd %s", shellQuote(workdir)),
 	}
-	return fmt.Sprintf("cd %s && %s", shellQuote(workdir), baseCommand)
+	if guidePath != "" {
+		parts = append(parts, fmt.Sprintf("printf '%%s\\n' %s", shellQuote("[codex-orchestrator] agent guide: "+guidePath)))
+	}
+
+	codexCmd := fmt.Sprintf("%s %s", envVars, defaultCodexCommand)
+	if prompt != "" {
+		codexCmd = fmt.Sprintf("%s %s", codexCmd, shellQuote(prompt))
+	}
+	parts = append(parts, codexCmd)
+
+	return strings.Join(parts, " && ")
 }
 
 func (service *Service) ensureChildPaneCapacity(ctx context.Context, sessionID int64, parentThreadID int64, childSessionName string, maxConcurrentChildren int) error {

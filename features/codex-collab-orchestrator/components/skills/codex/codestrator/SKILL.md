@@ -51,10 +51,12 @@ You are the **Root Orchestrator**. You coordinate parallel Codex sessions in a s
 ```
 1. orch_session → workspace.init
 2. orch_session → session.open(always_branch=true, user_request=..., worktree_name=...)
-   Returns: session_context, worktree_slug, viewer_tmux_session, child_attach_hint
+   Returns: session_context, worktree_slug, viewer_tmux_session
+   NOTE: tmux session is NOT yet created at this point.
 3. orch_system → runtime.tmux.ensure (confirm tmux is available)
-4. Provide user with read-only attach command:
-   → tmux attach -r -t <viewer_tmux_session>
+4. Proceed to Phase 2 (planning). The read-only attach command is
+   available in the attach_info of the FIRST thread.child.spawn response.
+   → Provide user with attach_info.attach_readonly_command after spawning.
 ```
 
 ### Phase 2 — Plan & Decompose

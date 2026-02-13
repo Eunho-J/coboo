@@ -101,7 +101,7 @@ func (service *Service) openSession(ctx context.Context, input sessionOpenInput)
 		"root_mode":           "caller_cli",
 		"worktree_slug":       resolvedSlug,
 		"viewer_tmux_session": viewerSessionName,
-		"child_attach_hint":   fmt.Sprintf("tmux attach -r -t %s", viewerSessionName),
+		"note":                "tmux viewer session is created when the first child is spawned. Use attach_info from thread.child.spawn response.",
 	}, nil
 }
 
